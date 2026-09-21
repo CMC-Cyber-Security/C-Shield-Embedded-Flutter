@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:c_shield_embedded/src/api/exceptions/c_shield_exception.dart';
+import 'package:c_shield_embedded/src/internal/aip/aip_canonical_query.dart';
 import 'package:c_shield_embedded/src/internal/aip/aip_normalizer.dart';
 import 'package:c_shield_embedded/src/internal/platform/c_shield_embedded_platform_interface.dart';
 
@@ -62,7 +63,8 @@ class CShieldAIP {
   ///
   /// Throws [CShieldException] with [CShieldErrorCode.aipInvalidSignature] or
   /// [CShieldErrorCode.aipTimestampExpired] on failure.
-  static Future<void> verify({required String payload, required String signature}) => CShieldEmbeddedPlatform.instance.aipVerify(payload: payload, signature: signature);
+  static Future<void> verify({required String payload, required String signature}) =>
+      CShieldEmbeddedPlatform.instance.aipVerify(payload: payload, signature: signature);
 
   /// Normalizes [body] bytes to their canonical signing form.
   ///
@@ -74,7 +76,8 @@ class CShieldAIP {
   /// native implementation — so it does not cross the method channel.
   ///
   /// Pass the `hash` value when building a payload for [sign].
-  static Future<Map<String, dynamic>> normalizeBody({required Uint8List body, String contentType = 'application/json'}) async =>
+  static Future<Map<String, dynamic>> normalizeBody(
+          {required Uint8List body, String contentType = 'application/json'}) async =>
       AIPNormalizer.normalizeBodyForSigning(body: body, contentType: contentType).toMap();
 
   // ── Mode 2b: Interceptor helpers — SDK constructs payload automatically ───
@@ -87,12 +90,23 @@ class CShieldAIP {
   ///
   /// The payload (`{method}.{path}.{timestamp}.{bodyHash}`) is built in Dart;
   /// only the cryptographic [sign] crosses to native.
-  static Future<Map<String, String>> signRequest({required String method, required String path, required Uint8List body, String contentType = 'application/json'}) async {
+  static Future<Map<String, String>> signRequest({
+    required String method,
+    required String path,
+    required String query,
+    required Uint8List body,
+    String contentType = 'application/json',
+  }) async {
     final normalized = AIPNormalizer.normalizeBodyForSigning(body: body, contentType: contentType);
-    final timestamp = _nowSeconds();
-    final payload = '$method.$path.$timestamp.${normalized.hash}';
-    final signature = await sign(payload);
-    return {'cs-timestamp': '$timestamp', 'cs-signature': signature};
+    final signature = await CShieldEmbeddedPlatform.instance.aipSignRequest(
+      method: method,
+      path: path,
+      canonicalQuery: AIPCanonicalQuery.canonicalQuery(query),
+      timestampSec: _nowSeconds(),
+      bodyHashHex: normalized.hash,
+    );
+
+    return signature.cast();
   }
 
   /// Verifies the AIP signature on an incoming response.
@@ -103,7 +117,12 @@ class CShieldAIP {
   /// The timestamp window check and payload (`{statusCode}.{path}.{timestamp}.
   /// {bodyHash}`) are computed in Dart; only the cryptographic [verify] crosses
   /// to native. Throws [CShieldException] on failure.
-  static Future<void> verifyResponse({required int statusCode, required String path, required Map<String, String> headers, required Uint8List body}) async {
+  static Future<void> verifyResponse(
+      {required int statusCode,
+      required String path,
+      required String query,
+      required Map<String, String> headers,
+      required Uint8List body}) async {
     final lower = {for (final e in headers.entries) e.key.toLowerCase(): e.value};
 
     final timestampStr = lower['cs-timestamp'];
@@ -123,9 +142,14 @@ class CShieldAIP {
       throw const CShieldException(CShieldErrorCode.aipMissingHeader, "Not found cs-signature in response's header");
     }
 
+    String canonicalQuery = AIPCanonicalQuery.canonicalQuery(query);
+    if (canonicalQuery.isNotEmpty) {
+      canonicalQuery = '?$canonicalQuery';
+    }
+
     // Hash the raw response bytes as-is, exactly like native validateResponse.
     final bodyHash = AIPNormalizer.sha256Hex(body);
-    final payload = '$statusCode.$path.$timestamp.$bodyHash';
+    final payload = '$statusCode.$path$canonicalQuery.$timestamp.$bodyHash';
     await verify(payload: payload, signature: signature);
   }
 }

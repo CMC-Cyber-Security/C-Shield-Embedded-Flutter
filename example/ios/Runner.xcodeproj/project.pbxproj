@@ -73,32 +73,10 @@
 		DA14C9B06276475FB2391536 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		A084A18C30385B8400DAC904 /* Exceptions for "Libs" folder in "Runner" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				OpenSSL.xcframework,
-			);
-			target = 97C146ED1CF9000F007C117D /* Runner */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		A084A19330385B9E00DAC904 /* Exceptions for "Libs" folder in "Embed Frameworks" build phase */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			buildPhase = 9705A1C41CF9048500538489 /* Embed Frameworks */;
-			membershipExceptions = (
-				OpenSSL.xcframework,
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A084A18630385B5900DAC904 /* Libs */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				A084A18C30385B8400DAC904 /* Exceptions for "Libs" folder in "Runner" target */,
-				A084A19330385B9E00DAC904 /* Exceptions for "Libs" folder in "Embed Frameworks" build phase */,
 			);
 			explicitFileTypes = {
 			};
@@ -281,6 +259,7 @@
 				};
 			};
 			buildConfigurationList = 97C146E91CF9000F007C117D /* Build configuration list for PBXProject "Runner" */;
+			compatibilityVersion = "Xcode 9.3";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -291,7 +270,6 @@
 			packageReferences = (
 				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
 			);
-			preferredProjectObjectVersion = 50;
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";

@@ -37,7 +37,14 @@ class CShieldInterceptor extends http.BaseClient {
     final (body, contentType) = _bodyAndContentType(request);
 
     // 1. Sign request — attach cs-timestamp + cs-signature headers.
-    final aipHeaders = await CShieldAIP.signRequest(method: request.method, path: path, body: body, contentType: contentType);
+    final aipHeaders = await CShieldAIP.signRequest(
+      method: request.method,
+      path: path,
+      query: request.url.query,
+      body: body,
+      contentType: contentType,
+    );
+
     request.headers.addAll(aipHeaders);
 
     // 2. Forward the signed request.
@@ -47,7 +54,12 @@ class CShieldInterceptor extends http.BaseClient {
 
     // 3. Buffer response body so we can verify the signature.
     final responseBytes = await streamed.stream.toBytes();
-    await CShieldAIP.verifyResponse(statusCode: streamed.statusCode, path: path, headers: streamed.headers, body: responseBytes);
+    await CShieldAIP.verifyResponse(
+        statusCode: streamed.statusCode,
+        path: path,
+        query: request.url.query,
+        headers: streamed.headers,
+        body: responseBytes);
 
     // 4. Reconstruct StreamedResponse with the buffered body.
     return http.StreamedResponse(

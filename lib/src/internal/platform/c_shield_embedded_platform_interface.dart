@@ -35,7 +35,8 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
 
   Future<bool> sslIsConfigured() => throw UnimplementedError();
 
-  Future<bool> sslCheckServerTrusted({required String certDerBase64, required String host}) => throw UnimplementedError();
+  Future<bool> sslCheckServerTrusted({required String certDerBase64, required String host}) =>
+      throw UnimplementedError();
 
   /// Executes an HTTPS request on the native side (OkHttp / URLSession) with
   /// certificate pinning enforced over the full chain.
@@ -49,7 +50,8 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
     int? connectTimeoutMs,
     int? receiveTimeoutMs,
     bool followRedirects = true,
-  }) => throw UnimplementedError();
+  }) =>
+      throw UnimplementedError();
 
   // ── AIP ──────────────────────────────────────────────────────────────────
   // Only the cryptographic sign/verify cross to native (they need the device
@@ -59,4 +61,13 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   Future<String> aipSign({required String payload}) => throw UnimplementedError();
 
   Future<void> aipVerify({required String payload, required String signature}) => throw UnimplementedError();
+
+  Future<Map<Object?, Object?>> aipSignRequest({
+    required String method,
+    required String path,
+    required String canonicalQuery,
+    required int timestampSec,
+    required String bodyHashHex,
+  }) =>
+      throw UnimplementedError();
 }

@@ -19,4 +19,5 @@ class CShieldChannels {
   // done in Dart (CShieldAIP / AIPNormalizer).
   static const String aipSign = 'aip.sign';
   static const String aipVerify = 'aip.verify';
+   static const String aipSignRequest = 'aip.signRequest';
 }

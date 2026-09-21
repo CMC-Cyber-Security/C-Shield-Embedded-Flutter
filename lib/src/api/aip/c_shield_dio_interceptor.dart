@@ -43,8 +43,8 @@ class CShieldDioInterceptor extends Interceptor {
     try {
       final aipHeaders = await CShieldAIP.signRequest(
         method: options.method,
-        // path only — no query string, matching Android (encodedPath) and iOS (url.path)
         path: options.uri.path,
+        query: options.uri.query,
         body: _requestBodyBytes(options),
         contentType: _contentType(options),
       );
@@ -70,7 +70,12 @@ class CShieldDioInterceptor extends Interceptor {
 
     try {
       final rawBytes = Uint8List.fromList(response.data as List<int>);
-      await CShieldAIP.verifyResponse(statusCode: response.statusCode ?? 0, path: response.requestOptions.uri.path, headers: _flattenHeaders(response.headers), body: rawBytes);
+      await CShieldAIP.verifyResponse(
+          statusCode: response.statusCode ?? 0,
+          path: response.requestOptions.uri.path,
+          query: response.requestOptions.uri.query,
+          headers: _flattenHeaders(response.headers),
+          body: rawBytes);
 
       // Restore original response type so callers receive decoded data.
       final originalType = response.requestOptions.extra[_kOriginalResponseType] as ResponseType? ?? ResponseType.json;
@@ -113,7 +118,8 @@ class CShieldDioInterceptor extends Interceptor {
     return options.contentType ?? options.headers['content-type']?.toString() ?? 'application/json';
   }
 
-  static Map<String, String> _flattenHeaders(Headers headers) => {for (final e in headers.map.entries) e.key: e.value.first};
+  static Map<String, String> _flattenHeaders(Headers headers) =>
+      {for (final e in headers.map.entries) e.key: e.value.first};
 
   static dynamic _decodeBytes(Uint8List bytes, ResponseType type) {
     if (type == ResponseType.bytes || type == ResponseType.stream) return bytes;

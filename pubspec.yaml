@@ -1,6 +1,6 @@
 name: c_shield_embedded
 description: "C-Shield Embedded Flutter SDK — provides AIP (API Integrity Protection: request/response signing) and SSL certificate pinning for Flutter apps, backed by native AAR/XCFramework."
-version: 1.0.2
+version: 1.0.3
 homepage: https://github.com/CMC-Cyber-Security/C-Shield-Embedded-Flutter
 repository: https://github.com/CMC-Cyber-Security/C-Shield-Embedded-Flutter
 issue_tracker: https://github.com/CMC-Cyber-Security/C-Shield-Embedded-Flutter/issues

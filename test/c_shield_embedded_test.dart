@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:c_shield_embedded/src/api/c_shield_embedded.dart';
 import 'package:c_shield_embedded/src/internal/platform/c_shield_embedded_platform_interface.dart';
 import 'package:c_shield_embedded/src/internal/platform/c_shield_embedded_method_channel.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -60,6 +59,12 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   @override
   Future<void> sslUpdatePins({required List<String> pins, required String hostname}) {
     // TODO: implement sslUpdatePins
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Map<Object, Object>> aipSignRequest({required String method, required String path, required String canonicalQuery, required int timestampSec, required String bodyHashHex}) {
+    // TODO: implement aipSignRequest
     throw UnimplementedError();
   }
 }
