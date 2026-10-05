@@ -25,7 +25,13 @@ The SDK wraps native AAR (Android) and XCFramework (iOS) libraries, so the signi
    - 4.4 [Integrating with Dio](#44-integrating-with-dio)
    - 4.5 [Manual verification](#45-manual-verification)
    - 4.6 [Capabilities, limitations, and recommendations](#46-capabilities-limitations-and-recommendations)
-5. [Exceptions](#5-exceptions)
+5. [Malware — On-Device Threat Scanning](#5-malware--on-device-threat-scanning)
+   - 5.1 [Permissions (Android)](#51-permissions-android)
+   - 5.2 [Scanning the whole device](#52-scanning-the-whole-device)
+   - 5.3 [Analyzing a single app or APK file](#53-analyzing-a-single-app-or-apk-file)
+   - 5.4 [Result models](#54-result-models)
+   - 5.5 [API reference](#55-api-reference)
+6. [Exceptions](#6-exceptions)
 
 ---
 
@@ -110,12 +116,41 @@ import 'package:flutter/material.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await CShieldEmbedded.initialize();
+  await CShieldEmbedded.initialize("your_c_shield_license");
   runApp(const MyApp());
 }
 ```
 
 If `initialize()` isn't called before using the other APIs, native behavior isn't guaranteed — always call it before any `CShieldSSL`/`CShieldAIP` call.
+
+### Listening to license lifecycle events
+
+After `initialize()`, the native SDK streams license lifecycle callbacks through `CShieldEmbedded.events` — a broadcast `Stream<CShieldEvent>`. Subscribe to react when the server renews or revokes the license at runtime:
+
+```dart
+import 'dart:async';
+import 'package:c_shield_embedded/c_shield_embedded.dart';
+
+StreamSubscription<CShieldEvent>? _licenseSub;
+
+void _listenLicenseEvents() {
+  _licenseSub = CShieldEmbedded.events.listen((event) {
+    switch (event) {
+      case LicenseRenewed(:final newJwt):
+        // The license was refreshed — persist/forward the new token.
+        debugPrint('License renewed: $newJwt');
+      case LicenseRevoked():
+        // The license was revoked — block protected features / force logout.
+        debugPrint('License revoked');
+    }
+  });
+}
+
+// Cancel the subscription when it's no longer needed (e.g. in dispose()).
+await _licenseSub?.cancel();
+```
+
+> `events` is a broadcast stream, so multiple listeners are allowed. Subscribe **after** `initialize()`, otherwise the native callback isn't wired yet and no events are delivered.
 
 ---
 
@@ -465,7 +500,130 @@ A fundamental Flutter constraint: `dart:io` **only exposes the leaf certificate*
 
 ---
 
-## 5. Exceptions
+## 5. Malware — On-Device Threat Scanning
+
+The malware module scans the device for threats: it inspects installed apps (and, when storage permission is granted, files on disk) and classifies findings into categories such as virus, blacklist, accessibility abuse, suspicious, and untrusted.
+
+> ⚠️ **Android only.** The scanner is backed by the Android native SDK. On iOS these APIs are **not** available (the plugin exposes no malware channel) — guard every call with `Platform.isAndroid`, or the method channel throws `CShieldException(nativeError)`.
+
+All methods live on `CShieldMalware`:
+
+```dart
+import 'dart:io' show Platform;
+import 'package:c_shield_embedded/c_shield_embedded.dart';
+
+if (Platform.isAndroid) {
+  final result = await CShieldMalware.scanDevice();
+}
+```
+
+### 5.1 Permissions (Android)
+
+Scanning **installed apps** requires no storage permission. Scanning **files** does — declare the storage permissions in `android/app/src/main/AndroidManifest.xml`:
+
+```xml
+<!-- Android ≤ 10 -->
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+
+<!-- Android 11+ : full-disk file scanning -->
+<uses-permission
+    android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+    tools:ignore="AllFilesAccessPolicy,ScopedStorage" />
+```
+
+> The SDK does **not** request permissions itself — the host app is responsible for requesting them at runtime (e.g. via the `permission_handler` package). `MANAGE_EXTERNAL_STORAGE` (All files access) is a special permission granted from system Settings, not a normal runtime dialog.
+
+When storage access is missing, `scanDevice()` still completes but only covers installed apps; the returned `DeviceScanResult.storagePermissionGranted` is `false` and `totalFiles` reflects the reduced coverage.
+
+### 5.2 Scanning the whole device
+
+`scanDevice()` runs a full scan and completes with a categorized `DeviceScanResult`. The scan runs natively and may take a while; call `stopScan()` to request cancellation (best-effort — the in-flight `scanDevice()` future still resolves on its own).
+
+```dart
+try {
+  final result = await CShieldMalware.scanDevice();
+
+  final threats = result.virus.length +
+      result.blacklist.length +
+      result.accessibility.length +
+      result.suspicious.length +
+      result.untrusted.length;
+
+  if (threats == 0) {
+    print('Device clean — scanned ${result.totalApps} apps, ${result.totalFiles} files');
+  } else {
+    for (final pkg in result.virus) {
+      print('Virus: ${pkg.name ?? pkg.packageName} (${pkg.source})');
+    }
+  }
+} on CShieldException catch (e) {
+  print('Scan failed: [${e.code.name}] ${e.message}');
+}
+
+// Cancel an in-flight scan (e.g. the user navigated away)
+await CShieldMalware.stopScan();
+```
+
+### 5.3 Analyzing a single app or APK file
+
+Instead of a full scan, analyze one target and get a single `ScannedPackage`:
+
+```dart
+// An installed app, by package name
+final app = await CShieldMalware.analyzeInstalledApp('com.example.target');
+
+// An APK file on disk, by absolute path
+final apk = await CShieldMalware.analyzeApkFile('/storage/emulated/0/Download/app.apk');
+
+print('${apk.packageName} — trust: ${apk.trustType}, source: ${apk.source}');
+```
+
+Both throw `CShieldException(invalidArgument)` if the path/package name is missing, and `CShieldException(nativeError)` on a native failure.
+
+### 5.4 Result models
+
+**`DeviceScanResult`:**
+
+| Field | Type | Description |
+|---|---|---|
+| `totalApps` | `int` | Number of installed apps scanned |
+| `totalFiles` | `int` | Number of files scanned (0 without storage permission) |
+| `startedAtMillis` | `int` | Scan start time (epoch ms) |
+| `durationMillis` | `int` | Total scan duration in ms |
+| `storagePermissionGranted` | `bool` | Whether file scanning had storage access |
+| `virus` | `List<ScannedPackage>` | Detected malware |
+| `blacklist` | `List<ScannedPackage>` | Packages matching the known-bad blacklist |
+| `accessibility` | `List<ScannedPackage>` | Apps abusing Accessibility services |
+| `suspicious` | `List<ScannedPackage>` | Packages flagged as suspicious |
+| `untrusted` | `List<ScannedPackage>` | Packages from an untrusted source |
+
+**`ScannedPackage`:**
+
+| Field | Type | Description |
+|---|---|---|
+| `packageName` | `String` | Application package id |
+| `name` | `String?` | Display name, if resolved |
+| `sign` | `String?` | Signing certificate signature |
+| `fileHash` | `String?` | Hash of the APK/file |
+| `urlLocal` | `String?` | Local path of the analyzed file |
+| `permissions` | `List<String>` | Declared permissions |
+| `trustType` | `String?` | Trust classification |
+| `source` | `String` | Where the package came from |
+| `publisher` | `String?` | Publisher, if known |
+| `payload` | `String?` | Extra native payload data |
+
+### 5.5 API reference
+
+| Method | Platform | Description |
+|---|---|---|
+| `scanDevice()` | Android | Full device scan → `DeviceScanResult` |
+| `analyzeInstalledApp(packageName)` | Android | Analyze one installed app → `ScannedPackage` |
+| `analyzeApkFile(filePath)` | Android | Analyze an APK file on disk → `ScannedPackage` |
+| `stopScan()` | Android | Best-effort cancel of the in-flight `scanDevice()` |
+
+---
+
+## 6. Exceptions
 
 All errors from the SDK are thrown as `CShieldException`:
 
