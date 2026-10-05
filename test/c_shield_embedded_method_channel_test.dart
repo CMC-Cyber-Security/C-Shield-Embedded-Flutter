@@ -30,7 +30,7 @@ void main() {
   });
 
   test('initialize sends sdk.initialize', () async {
-    await platform.initialize();
+    await platform.initialize(license: "test_license");
     expect(calls.single.method, 'sdk.initialize');
   });
 

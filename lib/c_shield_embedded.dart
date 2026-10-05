@@ -1,7 +1,10 @@
 export 'src/api/c_shield_embedded.dart';
 export 'src/api/exceptions/c_shield_exception.dart';
+export 'src/api/event/c_shield_event.dart';
 export 'src/api/ssl/c_shield_ssl.dart';
 export 'src/api/ssl/c_shield_native_adapter.dart';
 export 'src/api/aip/c_shield_aip.dart';
 export 'src/api/aip/c_shield_interceptor.dart';
 export 'src/api/aip/c_shield_dio_interceptor.dart';
+export 'src/api/malware/c_shield_malware.dart';
+export 'src/api/malware/models.dart';

@@ -1,6 +1,10 @@
 class CShieldChannels {
   static const String methodChannel = 'c_shield_embedded';
 
+  // Streams native license lifecycle callbacks (onLicenseRenewed /
+  // onLicenseRevoked) to Dart. See CShieldEmbeddedPlugin.StreamHandler.
+  static const String eventChannel = 'c_shield_embedded_event';
+
   static const String sdkInitialize = 'sdk.initialize';
 
   static const String sslConfigure = 'ssl.configure';
@@ -19,5 +23,10 @@ class CShieldChannels {
   // done in Dart (CShieldAIP / AIPNormalizer).
   static const String aipSign = 'aip.sign';
   static const String aipVerify = 'aip.verify';
-   static const String aipSignRequest = 'aip.signRequest';
+  static const String aipSignRequest = 'aip.signRequest';
+
+  static const String malwareScanDevice = 'malware.scanDevice';
+  static const String malwareAnalyzeApkFile = 'malware.analyzeApkFile';
+  static const String malwareAnalyzeInstalledApp = 'malware.analyzeInstalledApp';
+  static const String malwareStopScan = 'malware.cancelScanning';
 }
