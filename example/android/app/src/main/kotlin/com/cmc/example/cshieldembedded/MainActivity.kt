@@ -1,4 +1,4 @@
-package com.cmc.c_shield_embedded.c_shield_embedded_example
+package com.cmc.example.cshieldembedded
 
 import io.flutter.embedding.android.FlutterActivity
 

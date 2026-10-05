@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:c_shield_embedded/src/api/event/c_shield_event.dart';
+import 'package:c_shield_embedded/src/api/malware/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:c_shield_embedded/src/internal/platform/c_shield_embedded_platform_interface.dart';
 import 'package:c_shield_embedded/src/internal/platform/c_shield_embedded_method_channel.dart';
@@ -19,7 +21,7 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   }
 
   @override
-  Future<void> initialize() {
+  Future<void> initialize({required String license}) {
     // TODO: implement initialize
     throw UnimplementedError();
   }
@@ -63,10 +65,43 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   }
 
   @override
-  Future<Map<Object, Object>> aipSignRequest({required String method, required String path, required String canonicalQuery, required int timestampSec, required String bodyHashHex}) {
+  Future<Map<Object, Object>> aipSignRequest(
+      {required String method,
+      required String path,
+      required String canonicalQuery,
+      required int timestampSec,
+      required String bodyHashHex}) {
     // TODO: implement aipSignRequest
     throw UnimplementedError();
   }
+
+  @override
+  Future<ScannedPackage> analyzeApkFile(String filePath) {
+    // TODO: implement analyzeApkFile
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<ScannedPackage> analyzeInstalledApp(String packageName) {
+    // TODO: implement analyzeInstalledApp
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<DeviceScanResult> scanDevice() {
+    // TODO: implement scanDevice
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> stopScan() {
+    // TODO: implement stopScan
+    throw UnimplementedError();
+  }
+
+  @override
+  // TODO: implement licenseEvents
+  Stream<CShieldEvent> get events => throw UnimplementedError();
 }
 
 void main() {

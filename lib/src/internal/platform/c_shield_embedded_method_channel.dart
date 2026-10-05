@@ -1,4 +1,6 @@
 import 'package:c_shield_embedded/src/api/exceptions/c_shield_exception.dart';
+import 'package:c_shield_embedded/src/api/event/c_shield_event.dart';
+import 'package:c_shield_embedded/src/api/malware/models.dart';
 import 'package:c_shield_embedded/src/internal/channels.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +12,12 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
   /// The method channel used to interact with the native platform.
   @visibleForTesting
   final methodChannel = const MethodChannel('c_shield_embedded');
+
+  /// The event channel that streams native license lifecycle callbacks.
+  @visibleForTesting
+  final eventChannel = const EventChannel(CShieldChannels.eventChannel);
+
+  Stream<CShieldEvent>? _events;
 
   // Native call
   Future<T> _invoke<T>(String method, [dynamic args]) async {
@@ -23,7 +31,12 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
   // ── Initialization ──────────────────────────────────────────────────────────────────
 
   @override
-  Future<void> initialize() => _invoke(CShieldChannels.sdkInitialize);
+  Future<void> initialize({required String license}) => _invoke(CShieldChannels.sdkInitialize, {'license': license});
+
+  @override
+  Stream<CShieldEvent> get events => _events ??= eventChannel
+      .receiveBroadcastStream()
+      .map((event) => CShieldEvent.fromMap((event as Map).cast<Object?, Object?>()));
 
   // ── SSL ──────────────────────────────────────────────────────────────────
 
@@ -88,4 +101,26 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
         'timestampSec': timestampSec,
         'bodyHashHex': bodyHashHex,
       });
+
+  @override
+  Future<DeviceScanResult> scanDevice() async {
+    final result = await _invoke<Map>(CShieldChannels.malwareScanDevice);
+    return DeviceScanResult.fromMap(result);
+  }
+
+  @override
+  Future<ScannedPackage> analyzeApkFile(String filePath) async {
+    final result = await _invoke<Map<Object?, Object?>>(CShieldChannels.malwareAnalyzeApkFile, {'filePath': filePath});
+    return ScannedPackage.fromMap(result);
+  }
+
+  @override
+  Future<ScannedPackage> analyzeInstalledApp(String packageName) async {
+    final result =
+        await _invoke<Map<Object?, Object?>>(CShieldChannels.malwareAnalyzeInstalledApp, {'packageName': packageName});
+    return ScannedPackage.fromMap(result);
+  }
+
+  @override
+  Future<void> stopScan() => _invoke<void>(CShieldChannels.malwareStopScan);
 }

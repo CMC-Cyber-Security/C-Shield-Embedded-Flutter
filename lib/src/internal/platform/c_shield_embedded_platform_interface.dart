@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:c_shield_embedded/src/api/event/c_shield_event.dart';
+import 'package:c_shield_embedded/src/api/malware/models.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'c_shield_embedded_method_channel.dart';
@@ -26,7 +28,10 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   }
 
   // ── SDK ──────────────────────────────────────────────────────────────────
-  Future<void> initialize() => throw UnimplementedError();
+  Future<void> initialize({required String license}) => throw UnimplementedError();
+
+  /// Stream of native license lifecycle events (renewed / revoked).
+  Stream<CShieldEvent> get events => throw UnimplementedError();
 
   // ── SSL ──────────────────────────────────────────────────────────────────
   Future<void> sslConfigure({required List<String> pins, required String hostname}) => throw UnimplementedError();
@@ -70,4 +75,13 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
     required String bodyHashHex,
   }) =>
       throw UnimplementedError();
+
+  // ── Anti Malware ──────────────────────────────────────────────────────────────────
+  Future<DeviceScanResult> scanDevice() => throw UnimplementedError();
+
+  Future<ScannedPackage> analyzeApkFile(String filePath) => throw UnimplementedError();
+
+  Future<ScannedPackage> analyzeInstalledApp(String packageName) => throw UnimplementedError();
+
+  Future<void> stopScan() => throw UnimplementedError();
 }
