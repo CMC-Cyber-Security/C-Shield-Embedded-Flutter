@@ -45,7 +45,7 @@ Add `c_shield_embedded` to `pubspec.yaml`:
 dependencies:
   flutter:
     sdk: flutter
-  c_shield_embedded: ^1.0.0
+  c_shield_embedded: ^1.0.3
 ```
 
 Then run:
@@ -361,6 +361,8 @@ openssl x509 -in intermediate.pem -pubkey -noout \
 Call `configure()` after `initialize()`, before making any network request:
 
 ```dart
+await CShieldEmbedded.initialize("your_c_shield_license");
+
 await CShieldSSL.configure(
   pins: [
     'sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', // primary
