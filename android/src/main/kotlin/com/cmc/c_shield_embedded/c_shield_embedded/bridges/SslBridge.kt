@@ -160,6 +160,19 @@ class SslBridge {
                 mainHandler.post {
                     result.error(CShieldErrorCode.SSL_PIN_MISMATCH, e.message ?: "Certificate pin mismatch", null)
                 }
+            } catch (e: javax.net.ssl.SSLHandshakeException) {
+                // CShieldTrustManager rejects the chain (pin mismatch or untrusted CA)
+                // by throwing CertificateException during the handshake; OkHttp
+                // surfaces it wrapped in SSLHandshakeException.
+                val certFailure = generateSequence<Throwable>(e) { it.cause }
+                    .firstOrNull { it is CertificateException }
+                mainHandler.post {
+                    if (certFailure != null) {
+                        result.error(CShieldErrorCode.SSL_PIN_MISMATCH, certFailure.message ?: "Certificate pin mismatch", null)
+                    } else {
+                        result.error(CShieldErrorCode.NATIVE_ERROR, e.message, null)
+                    }
+                }
             } catch (e: Throwable) {
                 mainHandler.post { result.error(CShieldErrorCode.NATIVE_ERROR, e.message, null) }
             }
