@@ -127,6 +127,23 @@ class SslBridge {
                     .sslSocketFactory(CShieldSSL.getSSLSocketFactory(), CShieldSSL.getTrustManager())
                     .followRedirects(followRedirects)
                     .followSslRedirects(followRedirects)
+                    // FIX B — re-verify SPKI pin Ở NATIVE (độc lập CShieldTrustManager Java).
+                    // Chạy sau handshake, TRƯỚC khi gửi request: nếu attacker hook/thay
+                    // TrustManager Java để bỏ pin thì bước native này vẫn chặn MITM.
+                    // Native fail-open khi chưa sẵn sàng (trả true) nên không ảnh hưởng bình thường.
+                    .addNetworkInterceptor { chain ->
+                        val h = chain.request().url.host
+                        val ders = (chain.connection()?.handshake()?.peerCertificates ?: emptyList())
+                            .filterIsInstance<X509Certificate>()
+                            .map { it.encoded }
+                            .toTypedArray()
+                        if (!CShieldSSL.verifyChainNative(h, ders)) {
+                            throw javax.net.ssl.SSLPeerUnverifiedException(
+                                "CShield native pin mismatch for $h"
+                            )
+                        }
+                        chain.proceed(chain.request())
+                    }
                 connectTimeoutMs?.let { if (it > 0) builder.connectTimeout(it.toLong(), TimeUnit.MILLISECONDS) }
                 receiveTimeoutMs?.let { if (it > 0) builder.readTimeout(it.toLong(), TimeUnit.MILLISECONDS) }
                 val client = builder.build()
