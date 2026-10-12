@@ -65,37 +65,93 @@ import 'package:http/io_client.dart';
 class CShieldSSL {
   CShieldSSL._();
 
-  static List<String>? _pins;
-  static String? _hostname;
+  /// Cấu hình pin theo từng host (R5 — multi-host). `null` khi chưa configure.
+  static Map<String, List<String>>? _pinsByHost;
 
-  /// Configures certificate pinning.
+  /// Single-host convenience. Xem [configureHosts] cho nhiều host.
   ///
-  /// [pins] — pin list in format `"sha256/<base64>"`. Recommend at least 2 (primary + backup).
-  /// [hostname] — domain to pin (e.g. `"api.example.com"`).
+  /// [pins] — format `"sha256/<base64>"`, nên ≥2 (primary + backup).
+  /// [hostname] — domain cần pin.
+  /// [allowRuntimeUpdates] — `false` (mặc định) ⇒ native AUTO-SEAL sau configure (H-3):
+  ///   gọi lại configure/updatePins sẽ ném. `true` ⇒ cho phép mutate runtime (kém an toàn).
+  static Future<void> configure({
+    required List<String> pins,
+    required String hostname,
+    bool allowRuntimeUpdates = false,
+  }) => configureHosts(pinsByHost: {hostname: pins}, allowRuntimeUpdates: allowRuntimeUpdates);
+
+  /// Cấu hình pinning cho NHIỀU host trong MỘT lần gọi (R5).
   ///
-  /// Throws [CShieldException] with [CShieldErrorCode.invalidArgument] if
-  /// [pins] is empty, [hostname] is blank, or any pin does not start with
-  /// `"sha256/"`. Also throws [CShieldException] (other codes, e.g.
-  /// [CShieldErrorCode.nativeError]) if the underlying native call fails.
-  static Future<void> configure({required List<String> pins, required String hostname}) async {
-    if (pins.isEmpty) {
-      throw const CShieldException(CShieldErrorCode.invalidArgument, 'pins: Must contain at least one pin.');
+  /// Vì mặc định native auto-seal (H-3), phải khai báo TẤT CẢ host pin ở đây — gọi
+  /// configure lần 2 sẽ ném (trừ khi [allowRuntimeUpdates]=true).
+  ///
+  /// [pinsByHost] — `host pattern → danh sách pin`. Pattern: `example.com` (đúng),
+  ///   `*.example.com` (đúng 1 cấp subdomain), `**.example.com` (apex + mọi cấp).
+  ///
+  /// Throws [CShieldException] ([invalidArgument]) nếu rỗng/host trống/pin sai format;
+  /// hoặc ([sslNotConfigured]/[nativeError]) nếu native từ chối (vd đã seal).
+  static Future<void> configureHosts({
+    required Map<String, List<String>> pinsByHost,
+    bool allowRuntimeUpdates = false,
+  }) async {
+    if (pinsByHost.isEmpty) {
+      throw const CShieldException(CShieldErrorCode.invalidArgument, 'pinsByHost: Must contain at least one host.');
     }
-    if (hostname.trim().isEmpty) {
-      throw const CShieldException(CShieldErrorCode.invalidArgument, 'hostname: Must not be blank.');
-    }
-    for (final pin in pins) {
-      if (!pin.startsWith('sha256/')) {
-        throw CShieldException(CShieldErrorCode.invalidArgument, 'pins: Each pin must be in format "sha256/<base64>". Got: "$pin"');
+    pinsByHost.forEach((hostname, pins) {
+      if (hostname.trim().isEmpty) {
+        throw const CShieldException(CShieldErrorCode.invalidArgument, 'hostname: Must not be blank.');
       }
-    }
-    await CShieldEmbeddedPlatform.instance.sslConfigure(pins: pins, hostname: hostname);
-    _pins = List.unmodifiable(pins);
-    _hostname = hostname;
+      if (pins.isEmpty) {
+        throw CShieldException(CShieldErrorCode.invalidArgument, 'pins for "$hostname": Must contain at least one pin.');
+      }
+      for (final pin in pins) {
+        if (!pin.startsWith('sha256/')) {
+          throw CShieldException(CShieldErrorCode.invalidArgument, 'pins: Each pin must be in format "sha256/<base64>". Got: "$pin"');
+        }
+      }
+    });
+    await CShieldEmbeddedPlatform.instance.sslConfigure(pinsByHost: pinsByHost, allowRuntimeUpdates: allowRuntimeUpdates);
+    _pinsByHost = Map.unmodifiable({for (final e in pinsByHost.entries) e.key: List<String>.unmodifiable(e.value)});
   }
 
-  /// Updates pins (e.g. after certificate rotation).
-  static Future<void> updatePins({required List<String> pins, required String hostname}) => configure(pins: pins, hostname: hostname);
+  /// Updates pins (vd sau khi rotate certificate).
+  ///
+  /// CHỈ chạy nếu [configure]/[configureHosts] ban đầu dùng `allowRuntimeUpdates=true`;
+  /// nếu không, native đã auto-seal và lời gọi này sẽ ném ([sslNotConfigured]).
+  static Future<void> updatePins({required List<String> pins, required String hostname}) async {
+    await CShieldEmbeddedPlatform.instance.sslUpdatePins(pins: pins, hostname: hostname);
+    final merged = Map<String, List<String>>.from(_pinsByHost ?? const {});
+    merged[hostname] = List.unmodifiable(pins);
+    _pinsByHost = Map.unmodifiable(merged);
+  }
+
+  /// R5 — pin của host khớp cấu hình (exact / `*.` / `**.`), hoặc `null` nếu không pin.
+  static List<String>? _pinsForHost(String host) {
+    final map = _pinsByHost;
+    if (map == null) return null;
+    final exact = map[host];
+    if (exact != null) return exact;
+    for (final e in map.entries) {
+      if (_hostMatches(host, e.key)) return e.value;
+    }
+    return null;
+  }
+
+  /// Khớp host theo pattern giống PinningConfig (native): exact, `*.one-level`, `**.multi`.
+  static bool _hostMatches(String host, String pattern) {
+    if (pattern == host) return true;
+    if (pattern.startsWith('**.')) {
+      final apex = pattern.substring(3);
+      return host == apex || host.endsWith('.$apex');
+    }
+    if (pattern.startsWith('*.')) {
+      final suffix = pattern.substring(2);
+      if (!host.endsWith('.$suffix')) return false;
+      final sub = host.substring(0, host.length - suffix.length - 1);
+      return sub.isNotEmpty && !sub.contains('.'); // đúng 1 cấp subdomain
+    }
+    return false;
+  }
 
   /// Returns true if pinning has been configured.
   ///
@@ -125,21 +181,20 @@ class CShieldSSL {
   /// Throws [CShieldException] with [CShieldErrorCode.sslNotConfigured] if
   /// [configure] has not been called.
   static HttpClient createHttpClient() {
-    final pins = _pins;
-    final hostname = _hostname;
-    if (pins == null || hostname == null) {
+    if (_pinsByHost == null) {
       throw const CShieldException(CShieldErrorCode.sslNotConfigured, 'CShieldSSL has not been configured. Call CShieldSSL.configure() first.');
     }
 
     final client = HttpClient();
 
     // Called only when the cert fails normal CA validation (self-signed,
-    // unknown CA, hostname mismatch, etc.). Returns true iff the SPKI pin
-    // matches, allowing pinned non-standard certs through.
+    // unknown CA, hostname mismatch, etc.). Returns true iff the host is pinned
+    // (R5 — any configured pattern) AND the SPKI pin matches.
     client.badCertificateCallback = (X509Certificate cert, String host, int port) {
-      if (host != hostname) return false;
+      final hostPins = _pinsForHost(host);
+      if (hostPins == null) return false;
       final computed = _computeSpkiPin(cert.der);
-      return computed != null && pins.contains(computed);
+      return computed != null && hostPins.contains(computed);
     };
 
     return client;
@@ -195,11 +250,11 @@ class CShieldSSL {
   /// Throws [CShieldException] with [CShieldErrorCode.sslNotConfigured] if
   /// [configure] has not been called.
   static HttpClientAdapter createDioAdapter() {
-    final hostname = _hostname;
-    if (_pins == null || hostname == null) {
+    final map = _pinsByHost;
+    if (map == null) {
       throw const CShieldException(CShieldErrorCode.sslNotConfigured, 'CShieldSSL has not been configured. Call CShieldSSL.configure() first.');
     }
-    return CShieldNativeHttpAdapter(hostname: hostname);
+    return CShieldNativeHttpAdapter(hostPatterns: map.keys.toSet());
   }
 
   // ── verifyPin ──────────────────────────────────────────────────────────

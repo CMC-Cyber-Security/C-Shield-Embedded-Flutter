@@ -33,7 +33,7 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   }
 
   @override
-  Future<void> sslConfigure({required List<String> pins, required String hostname}) {
+  Future<void> sslConfigure({required Map<String, List<String>> pinsByHost, bool allowRuntimeUpdates = false}) {
     // TODO: implement sslConfigure
     throw UnimplementedError();
   }

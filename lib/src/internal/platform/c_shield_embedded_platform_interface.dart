@@ -34,7 +34,8 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   Stream<CShieldEvent> get events => throw UnimplementedError();
 
   // ── SSL ──────────────────────────────────────────────────────────────────
-  Future<void> sslConfigure({required List<String> pins, required String hostname}) => throw UnimplementedError();
+  // R5 — multi-host. H-3 — allowRuntimeUpdates=false (mặc định) ⇒ native auto-seal.
+  Future<void> sslConfigure({required Map<String, List<String>> pinsByHost, bool allowRuntimeUpdates = false}) => throw UnimplementedError();
 
   Future<void> sslUpdatePins({required List<String> pins, required String hostname}) => throw UnimplementedError();
 

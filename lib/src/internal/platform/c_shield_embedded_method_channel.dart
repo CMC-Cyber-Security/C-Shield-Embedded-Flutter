@@ -41,8 +41,8 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
   // ── SSL ──────────────────────────────────────────────────────────────────
 
   @override
-  Future<void> sslConfigure({required List<String> pins, required String hostname}) =>
-      _invoke(CShieldChannels.sslConfigure, {'pins': pins, 'hostname': hostname});
+  Future<void> sslConfigure({required Map<String, List<String>> pinsByHost, bool allowRuntimeUpdates = false}) =>
+      _invoke(CShieldChannels.sslConfigure, {'pinsByHost': pinsByHost, 'allowRuntimeUpdates': allowRuntimeUpdates});
 
   @override
   Future<void> sslUpdatePins({required List<String> pins, required String hostname}) =>

@@ -23,15 +23,19 @@ import 'package:dio/io.dart';
 /// call and the response body is returned in full. This covers typical REST/JSON
 /// usage. For large uploads/downloads or SSE, use a non-pinned Dio instance.
 class CShieldNativeHttpAdapter implements HttpClientAdapter {
-  CShieldNativeHttpAdapter({required String hostname}) : _hostname = hostname, _fallback = IOHttpClientAdapter();
+  CShieldNativeHttpAdapter({required Set<String> hostPatterns})
+      : _hostPatterns = hostPatterns,
+        _fallback = IOHttpClientAdapter();
 
-  final String _hostname;
+  /// R5 — mọi host pattern được pin (exact / `*.` / `**.`). Request khớp BẤT KỲ pattern
+  /// nào (qua HTTPS) sẽ đi native; còn lại delegate [_fallback].
+  final Set<String> _hostPatterns;
   final HttpClientAdapter _fallback;
 
   @override
   Future<ResponseBody> fetch(RequestOptions options, Stream<Uint8List>? requestStream, Future<dynamic>? cancelFuture) async {
     final uri = options.uri;
-    final isPinnedHost = uri.isScheme('https') && uri.host == _hostname;
+    final isPinnedHost = uri.isScheme('https') && _hostPatterns.any((p) => _hostMatches(uri.host, p));
     if (!isPinnedHost) {
       return _fallback.fetch(options, requestStream, cancelFuture);
     }
@@ -63,6 +67,22 @@ class CShieldNativeHttpAdapter implements HttpClientAdapter {
 
   @override
   void close({bool force = false}) => _fallback.close(force: force);
+
+  /// Khớp host theo pattern giống PinningConfig (native): exact, `*.one-level`, `**.multi`.
+  static bool _hostMatches(String host, String pattern) {
+    if (pattern == host) return true;
+    if (pattern.startsWith('**.')) {
+      final apex = pattern.substring(3);
+      return host == apex || host.endsWith('.$apex');
+    }
+    if (pattern.startsWith('*.')) {
+      final suffix = pattern.substring(2);
+      if (!host.endsWith('.$suffix')) return false;
+      final sub = host.substring(0, host.length - suffix.length - 1);
+      return sub.isNotEmpty && !sub.contains('.');
+    }
+    return false;
+  }
 
   static Future<Uint8List> _collectBytes(Stream<Uint8List> stream) async {
     final chunks = <int>[];

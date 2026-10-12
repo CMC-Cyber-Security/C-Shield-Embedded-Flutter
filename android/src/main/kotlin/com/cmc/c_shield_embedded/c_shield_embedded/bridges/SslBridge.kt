@@ -39,13 +39,26 @@ class SslBridge {
     }
 
     private fun handleConfigure(call: MethodCall, result: MethodChannel.Result) {
-        val pins = call.argument<List<String>>("pins")
-            ?: return result.error(CShieldErrorCode.INVALID_ARGUMENT, "pins required", null)
-        val hostname = call.argument<String>("hostname")
-            ?: return result.error(CShieldErrorCode.INVALID_ARGUMENT, "hostname required", null)
+        // R5 — multi-host: ưu tiên map pinsByHost (host -> pins). Giữ tương thích đường cũ
+        // (pins + hostname) bằng cách gói thành map 1 phần tử.
+        val pinsByHost: Map<String, List<String>> = run {
+            val map = call.argument<Map<String, List<String>>>("pinsByHost")
+            if (map != null && map.isNotEmpty()) return@run map
+            val pins = call.argument<List<String>>("pins")
+            val hostname = call.argument<String>("hostname")
+            if (pins != null && hostname != null) mapOf(hostname to pins) else emptyMap()
+        }
+        if (pinsByHost.isEmpty()) {
+            return result.error(CShieldErrorCode.INVALID_ARGUMENT, "pinsByHost (or pins+hostname) required", null)
+        }
+        // H-3 — mặc định auto-seal; app truyền allowRuntimeUpdates=true nếu cần rotate runtime.
+        val allowRuntimeUpdates = call.argument<Boolean>("allowRuntimeUpdates") ?: false
         try {
-            CShieldSSL.configure(pins = pins, hostname = hostname)
+            CShieldSSL.configure(pinsByHost = pinsByHost, allowRuntimeUpdates = allowRuntimeUpdates)
             result.success(null)
+        } catch (e: IllegalStateException) {
+            // Đã seal (configure trước đó ở chế độ auto-seal) → cấu hình pin bị khoá.
+            result.error(CShieldErrorCode.SSL_NOT_CONFIGURED, e.message, null)
         } catch (e: Throwable) {
             result.error(CShieldErrorCode.NATIVE_ERROR, e.message, null)
         }
@@ -60,6 +73,7 @@ class SslBridge {
             CShieldSSL.updatePins(pins = pins, hostname = hostname)
             result.success(null)
         } catch (e: IllegalStateException) {
+            // H-3 — pinning đã auto-seal: updatePins chỉ chạy nếu configure(allowRuntimeUpdates=true).
             result.error(CShieldErrorCode.SSL_NOT_CONFIGURED, e.message, null)
         } catch (e: Throwable) {
             result.error(CShieldErrorCode.NATIVE_ERROR, e.message, null)
