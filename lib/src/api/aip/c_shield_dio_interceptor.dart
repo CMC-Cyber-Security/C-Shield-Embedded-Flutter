@@ -34,12 +34,22 @@ import 'c_shield_aip.dart';
 class CShieldDioInterceptor extends Interceptor {
   final bool verifyResponses;
 
-  const CShieldDioInterceptor({this.verifyResponses = true});
+  /// Chọn request nào được ký (mặc định `null` = ký TẤT CẢ). Request không khớp đi qua
+  /// KHÔNG ký + KHÔNG verify response (ký chọn lọc vài API).
+  final bool Function(RequestOptions options)? signWhen;
+
+  const CShieldDioInterceptor({this.verifyResponses = true, this.signWhen});
 
   static const _kOriginalResponseType = '_cshield_original_response_type';
+  static const _kSkipAip = '_cshield_skip_aip';
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+    if (signWhen != null && !signWhen!(options)) {
+      options.extra[_kSkipAip] = true; // không ký → onResponse bỏ verify
+      handler.next(options);
+      return;
+    }
     try {
       final aipHeaders = await CShieldAIP.signRequest(
         method: options.method,
@@ -63,7 +73,7 @@ class CShieldDioInterceptor extends Interceptor {
 
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) async {
-    if (!verifyResponses) {
+    if (!verifyResponses || response.requestOptions.extra[_kSkipAip] == true) {
       handler.next(response);
       return;
     }

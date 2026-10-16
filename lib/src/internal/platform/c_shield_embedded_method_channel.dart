@@ -80,9 +80,6 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
   // are done in Dart (see CShieldAIP / AIPNormalizer).
 
   @override
-  Future<String> aipSign({required String payload}) => _invoke<String>(CShieldChannels.aipSign, {'payload': payload});
-
-  @override
   Future<void> aipVerify({required String payload, required String signature}) =>
       _invoke(CShieldChannels.aipVerify, {'payload': payload, 'signature': signature});
 

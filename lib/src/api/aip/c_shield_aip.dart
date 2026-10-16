@@ -7,33 +7,24 @@ import 'package:c_shield_embedded/src/internal/platform/c_shield_embedded_platfo
 
 /// Low-level AIP (API Integrity Protection) API.
 ///
-/// ## Payload format (same on Android, iOS, Flutter)
+/// ## Cách dùng
 ///
-/// **Request:** `{METHOD}.{path}.{unixTimestamp}.{bodyHash}`
-/// Example: `POST./api/v1/login.1716000000.a3f8c2...`
+/// **Tự động (khuyến nghị):** [CShieldInterceptor] (`http`) hoặc [CShieldDioInterceptor]
+/// (Dio) — ký request + verify response trong suốt.
 ///
-/// **Response:** `{statusCode}.{path}.{unixTimestamp}.{bodyHash}`
-/// Example: `200./api/v1/login.1716000000.b7e1d4...`
+/// **Thủ công:** [signRequest] ký một request → trả header `cs-proof` để tự gắn (ký chọn lọc
+/// vài API); [verifyResponse] verify response.
 ///
-/// - `path` is the URL path only, without query string.
-/// - `bodyHash` is SHA-256 of the normalized body (lowercase hex).
-/// - Timestamp window: ±30 seconds. Requests/responses outside this window fail.
+/// ## Ký request — header `cs-proof`
+/// [signRequest] trả `{'cs-proof': <base64>}` (envelope attested: accessToken + requestId +
+/// timestamp + requestHash + chữ ký ECDSA bằng hardware key). Gắn NGUYÊN map vào header rồi
+/// gửi NGAY — `requestId` one-time + `timestamp` cửa sổ ±30s → KHÔNG cache/tái dùng.
 ///
-/// ## Body normalization
-///
-/// For `multipart/form-data` (file uploads):
-/// - **File parts are skipped** — only text fields are signed.
-/// - Text fields are sorted by key and JSON-encoded (same as native).
-///
-/// For all other content types: body bytes are signed as-is.
-///
-/// ## Two usage modes
-///
-/// **Mode 1 — Automatic (recommended):** Use [CShieldInterceptor] (`http`)
-/// or [CShieldDioInterceptor] (Dio). Sign/verify happens transparently.
-///
-/// **Mode 2 — Manual:** Use [signRequest]/[verifyResponse] or
-/// [sign]/[verify] for full control.
+/// ## Verify response
+/// Server ký response theo `{statusCode}.{path}.{unixTimestamp}.{bodyHash}` + header
+/// `cs-timestamp`/`cs-signature`; [verifyResponse] kiểm cửa sổ ±30s rồi verify.
+/// `path` = URL path (không query); `bodyHash` = SHA-256 hex của body đã chuẩn hoá
+/// (multipart: bỏ file part, sort key, JSON-encode; còn lại: bytes thô).
 class CShieldAIP {
   CShieldAIP._();
 
@@ -44,20 +35,6 @@ class CShieldAIP {
   static const int _responseFreshnessSeconds = 30;
 
   static int _nowSeconds() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
-
-  // ── Mode 2a: Standalone — caller constructs payload manually ─────────────
-
-  /// Signs a raw [payload] string and returns the signature.
-  ///
-  /// You are responsible for building the payload:
-  /// ```dart
-  /// final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-  /// final norm = await CShieldAIP.normalizeBody(body: bytes, contentType: 'application/json');
-  /// final payload = 'POST./api/v1/login.$ts.${norm['hash']}';
-  /// final sig = await CShieldAIP.sign(payload);
-  /// // Attach to request: {'cs-timestamp': '$ts', 'cs-signature': sig}
-  /// ```
-  static Future<String> sign(String payload) => CShieldEmbeddedPlatform.instance.aipSign(payload: payload);
 
   /// Verifies [signature] against [payload].
   ///
@@ -82,14 +59,16 @@ class CShieldAIP {
 
   // ── Mode 2b: Interceptor helpers — SDK constructs payload automatically ───
 
-  /// Signs an outgoing request and returns `{'cs-timestamp': ..., 'cs-signature': ...}`.
+  /// Signs an outgoing request and returns the AIP header map (`{'cs-proof': ...}`).
   ///
   /// [path] must be the URL path only (no query string).
   /// [body] should be normalized multipart bytes for file-upload requests
   /// (see [normalizeBody]) or raw JSON/text bytes for regular requests.
   ///
-  /// The payload (`{method}.{path}.{timestamp}.{bodyHash}`) is built in Dart;
-  /// only the cryptographic [sign] crosses to native.
+  /// The request components cross to native, which builds the canonical request,
+  /// signs it with the device hardware key and returns the `cs-proof` header
+  /// (ECDSA signature + access token). The server verifies cs-proof against the
+  /// device's registered public key.
   static Future<Map<String, String>> signRequest({
     required String method,
     required String path,

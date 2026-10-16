@@ -21,7 +21,6 @@ class CShieldChannels {
   // AIP — only the cryptographic sign/verify cross to native. Body
   // normalization, payload construction and the timestamp-window check are
   // done in Dart (CShieldAIP / AIPNormalizer).
-  static const String aipSign = 'aip.sign';
   static const String aipVerify = 'aip.verify';
   static const String aipSignRequest = 'aip.signRequest';
 

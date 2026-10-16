@@ -144,7 +144,8 @@ class SslBridge {
                     // FIX B — re-verify SPKI pin Ở NATIVE (độc lập CShieldTrustManager Java).
                     // Chạy sau handshake, TRƯỚC khi gửi request: nếu attacker hook/thay
                     // TrustManager Java để bỏ pin thì bước native này vẫn chặn MITM.
-                    // Native fail-open khi chưa sẵn sàng (trả true) nên không ảnh hưởng bình thường.
+                    // R4 — FAIL-CLOSED: verifyChainNative trả false cho host đã-pin khi native
+                    // chưa nhận pins / JNI lỗi (không còn fail-open). Host KHÔNG pin mới pass.
                     .addNetworkInterceptor { chain ->
                         val h = chain.request().url.host
                         val ders = (chain.connection()?.handshake()?.peerCertificates ?: emptyList())

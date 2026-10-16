@@ -64,8 +64,6 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   // key and proxy-CA check). Body normalization, payload construction, hashing
   // and the timestamp-window check all happen in Dart (see AIPNormalizer /
   // CShieldAIP) — no fabricated request URL required.
-  Future<String> aipSign({required String payload}) => throw UnimplementedError();
-
   Future<void> aipVerify({required String payload, required String signature}) => throw UnimplementedError();
 
   Future<Map<Object?, Object?>> aipSignRequest({

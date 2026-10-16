@@ -5,11 +5,8 @@ import android.os.Handler
 import android.os.Looper
 import com.cmc.c_shield_embedded.c_shield_embedded.CShieldErrorCode
 import com.cmc.cshield_embedded.aip.api.AIPCore
-import com.cmc.cshield_embedded.aip.signing.CompositeRequestSigner
 import com.cmc.cshield_embedded.aip.signing.HardwareRequestSigner
-import com.cmc.cshield_embedded.aip.signing.NativeRsaRequestSigner
 import com.cmc.cshield_embedded.aip.signing.RequestContext
-import com.cmc.cshield_embedded.aip.signing.RequestSigner
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlin.collections.mutableMapOf
@@ -18,11 +15,8 @@ class AipBridge(private val context: Context) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Ưu tiên v2 (hardware ECDSA) → fallback v1 (RSA nhúng). Stateless trừ positive-cache
-    // key trong HardwareRequestSigner, nên chia sẻ một instance cho mọi request.
-    private val requestSigner: RequestSigner = CompositeRequestSigner(
-        listOf(HardwareRequestSigner(), NativeRsaRequestSigner())
-    )
+    // Ký bằng hardware key (fallback baked-key đã bỏ). Stateless → chia sẻ một instance.
+    private val requestSigner = HardwareRequestSigner()
 
     // Only the cryptographic sign/verify are exposed to Flutter. Body
     // normalization, payload construction, hashing and the response
@@ -30,25 +24,10 @@ class AipBridge(private val context: Context) {
     // so no fabricated okhttp Request/URL is needed here.
     fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "aip.sign"   -> handleSign(call, result)
             "aip.verify" -> handleVerify(call, result)
             "aip.signRequest" -> handleSignRequest(call, result)
             else -> result.notImplemented()
         }
-    }
-
-    private fun handleSign(call: MethodCall, result: MethodChannel.Result) {
-        val payload = call.argument<String>("payload")
-            ?: return result.error(CShieldErrorCode.INVALID_ARGUMENT, "payload required", null)
-
-        Thread {
-            try {
-                val signature = AIPCore.sign(context, payload)
-                mainHandler.post { result.success(signature) }
-            } catch (e: Throwable) {
-                mainHandler.post { result.error(CShieldErrorCode.AIP_SIGNING_FAILED, e.message, null) }
-            }
-        }.start()
     }
 
     private fun handleVerify(call: MethodCall, result: MethodChannel.Result) {
@@ -92,7 +71,7 @@ class AipBridge(private val context: Context) {
                     bodyHashHex = bodyHashHex,
                 )
                 val signature = requestSigner.sign(ctx)
-                mainHandler.post { result.success(signature?.fold(mutableMapOf<String, String>(), { m, it -> m.apply { put(it.name, it.value) }  } ) )}
+                mainHandler.post { result.success(signature.fold(mutableMapOf<String, String>()) { m, it -> m.apply { put(it.name, it.value) } }) }
             } catch (e: Throwable) {
                 mainHandler.post { result.error(CShieldErrorCode.AIP_SIGNING_FAILED, e.message, null) }
             }

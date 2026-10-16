@@ -20,7 +20,7 @@ import 'c_shield_aip.dart';
 ///   headers: {'Content-Type': 'application/json'},
 ///   body: jsonEncode({'name': 'Alice'}),
 /// );
-/// // cs-timestamp / cs-signature are attached automatically.
+/// // The cs-proof header is attached automatically.
 /// // Response signature is verified automatically before returning.
 /// ```
 ///
@@ -29,14 +29,23 @@ class CShieldInterceptor extends http.BaseClient {
   final http.Client _inner;
   final bool verifyResponses;
 
-  CShieldInterceptor({http.Client? inner, this.verifyResponses = true}) : _inner = inner ?? http.Client();
+  /// Chọn request nào được ký (mặc định `null` = ký TẤT CẢ). Request không khớp đi qua
+  /// KHÔNG ký + KHÔNG verify response (ký chọn lọc vài API).
+  final bool Function(http.BaseRequest request)? signWhen;
+
+  CShieldInterceptor({http.Client? inner, this.verifyResponses = true, this.signWhen})
+      : _inner = inner ?? http.Client();
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (signWhen != null && !signWhen!(request)) {
+      return _inner.send(request); // không thuộc diện ký → forward nguyên bản
+    }
+
     final path = request.url.path;
     final (body, contentType) = _bodyAndContentType(request);
 
-    // 1. Sign request — attach cs-timestamp + cs-signature headers.
+    // 1. Sign request — attach the cs-proof header (hardware-key ECDSA + access token).
     final aipHeaders = await CShieldAIP.signRequest(
       method: request.method,
       path: path,
