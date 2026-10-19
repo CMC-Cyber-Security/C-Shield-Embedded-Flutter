@@ -29,4 +29,10 @@ class CShieldChannels {
   static const String malwareAnalyzeApkFile = 'malware.analyzeApkFile';
   static const String malwareAnalyzeInstalledApp = 'malware.analyzeInstalledApp';
   static const String malwareStopScan = 'malware.cancelScanning';
+
+  // Anti-overlay / anti-tapjacking runtime guard. protect() hardens the host's
+  // current Activity window; obscured-screen callbacks arrive over [eventChannel]
+  // as OverlayDetected / OverlayCleared events. Android-only.
+  static const String antiOverlayProtect = 'antiOverlay.protect';
+  static const String antiOverlayUnprotect = 'antiOverlay.unprotect';
 }

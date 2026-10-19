@@ -123,4 +123,13 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
 
   @override
   Future<void> stopScan() => _invoke<void>(CShieldChannels.malwareStopScan);
+
+  // ── Anti Overlay ──────────────────────────────────────────────────────────
+
+  @override
+  Future<void> antiOverlayProtect({bool blockObscuredTouches = true}) =>
+      _invoke(CShieldChannels.antiOverlayProtect, {'blockObscuredTouches': blockObscuredTouches});
+
+  @override
+  Future<void> antiOverlayUnprotect() => _invoke(CShieldChannels.antiOverlayUnprotect);
 }

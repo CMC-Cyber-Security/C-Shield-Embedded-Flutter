@@ -100,6 +100,18 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   }
 
   @override
+  Future<void> antiOverlayProtect({bool blockObscuredTouches = true}) {
+    // TODO: implement antiOverlayProtect
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> antiOverlayUnprotect() {
+    // TODO: implement antiOverlayUnprotect
+    throw UnimplementedError();
+  }
+
+  @override
   // TODO: implement licenseEvents
   Stream<CShieldEvent> get events => throw UnimplementedError();
 }

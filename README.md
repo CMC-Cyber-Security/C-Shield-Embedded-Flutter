@@ -31,7 +31,11 @@ The SDK wraps native AAR (Android) and XCFramework (iOS) libraries, so the signi
    - 5.3 [Analyzing a single app or APK file](#53-analyzing-a-single-app-or-apk-file)
    - 5.4 [Result models](#54-result-models)
    - 5.5 [API reference](#55-api-reference)
-6. [Exceptions](#6-exceptions)
+6. [Anti-Overlay — Tapjacking Guard](#6-anti-overlay--tapjacking-guard)
+   - 6.1 [Protecting a sensitive screen](#61-protecting-a-sensitive-screen)
+   - 6.2 [Reacting to overlay events](#62-reacting-to-overlay-events)
+   - 6.3 [API reference](#63-api-reference)
+7. [Exceptions](#7-exceptions)
 
 ---
 
@@ -548,6 +552,7 @@ try {
   final threats = result.virus.length +
       result.blacklist.length +
       result.accessibility.length +
+      result.overlay.length +
       result.suspicious.length +
       result.untrusted.length;
 
@@ -596,6 +601,7 @@ Both throw `CShieldException(invalidArgument)` if the path/package name is missi
 | `virus` | `List<ScannedPackage>` | Detected malware |
 | `blacklist` | `List<ScannedPackage>` | Packages matching the known-bad blacklist |
 | `accessibility` | `List<ScannedPackage>` | Apps abusing Accessibility services |
+| `overlay` | `List<ScannedPackage>` | Apps able to overlay/phish (draw-over or accessibility granted, or the permission combo) |
 | `suspicious` | `List<ScannedPackage>` | Packages flagged as suspicious |
 | `untrusted` | `List<ScannedPackage>` | Packages from an untrusted source |
 
@@ -625,7 +631,98 @@ Both throw `CShieldException(invalidArgument)` if the path/package name is missi
 
 ---
 
-## 6. Exceptions
+## 6. Anti-Overlay — Tapjacking Guard
+
+A runtime guard that protects the host app's **own sensitive screens** (login, OTP, money transfer…) against **overlay / tapjacking** attacks — the classic banking-trojan vector where a malicious app draws a fake or transparent window **on top** of your screen to hijack taps or trick input.
+
+It wraps the current Activity's window and inspects every touch for Android's **"window is obscured"** flags (`FLAG_WINDOW_IS_OBSCURED` / `FLAG_WINDOW_IS_PARTIALLY_OBSCURED`) — a framework-level signal that cannot be spoofed. Fully-obscured taps are swallowed so the attacker's overlay can't harvest them, and your listener is notified so you can warn the user or pause input.
+
+> ⚠️ **Android only.** The guard relies on Android `MotionEvent` obscured flags; iOS has no equivalent, so `CShieldAntiOverlay.protect()` / `unprotect()` are not available on iOS (the method channel reports not-implemented). Guard calls with `Platform.isAndroid`.
+
+> This complements §5: the **scan** (`DeviceScanResult.overlay`) tells you *which apps on the device could overlay/phish*; the guard below blocks an overlay *at the moment of attack* on a specific screen.
+
+### 6.1 Protecting a sensitive screen
+
+Opt-in **per screen** — the SDK does not hook every screen automatically (that would false-positive on legitimate keyboards / floating bubbles). Call `protect()` when a sensitive screen appears and `unprotect()` when you leave it. In a single-Activity Flutter app this maps naturally to route transitions:
+
+```dart
+import 'dart:io' show Platform;
+import 'package:c_shield_embedded/c_shield_embedded.dart';
+
+class LoginPage extends StatefulWidget { /* ... */ }
+
+class _LoginPageState extends State<LoginPage> {
+  @override
+  void initState() {
+    super.initState();
+    if (Platform.isAndroid) {
+      // Default: tapjacking taps on a fully-obscured window are swallowed.
+      CShieldAntiOverlay.protect();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (Platform.isAndroid) {
+      CShieldAntiOverlay.unprotect();
+    }
+    super.dispose();
+  }
+
+  // ... build()
+}
+```
+
+Observe-only (still get callbacks, but deliver obscured taps normally):
+
+```dart
+await CShieldAntiOverlay.protect(blockObscuredTouches: false);
+```
+
+### 6.2 Reacting to overlay events
+
+Overlay notifications arrive on the shared `CShieldEmbedded.events` stream as `OverlayDetected` / `OverlayCleared`:
+
+```dart
+late final StreamSubscription<CShieldEvent> _sub;
+
+@override
+void initState() {
+  super.initState();
+  _sub = CShieldEmbedded.events.listen((event) {
+    switch (event) {
+      case OverlayDetected(:final fullyObscured):
+        // Warn the user + pause sensitive input + optionally log telemetry.
+        _showOverlayWarning(fully: fullyObscured);
+      case OverlayCleared():
+        _hideOverlayWarning();
+      default:
+        break; // license events, etc.
+    }
+  });
+}
+
+@override
+void dispose() {
+  _sub.cancel();
+  super.dispose();
+}
+```
+
+`OverlayDetected` carries `fullyObscured` (another window fully covers the view — the strongest signal) and `partiallyObscured` (partial cover, API 29+ — weaker; some OEM system UI can trigger it). `OverlayCleared` fires once when touches are no longer obscured.
+
+### 6.3 API reference
+
+| Method | Platform | Description |
+|---|---|---|
+| `protect({bool blockObscuredTouches = true})` | Android | Hardens the current screen; swallows fully-obscured taps when `blockObscuredTouches` is true |
+| `unprotect()` | Android | Removes the guard, restoring normal touch handling |
+
+Events (via `CShieldEmbedded.events`): `OverlayDetected(fullyObscured, partiallyObscured)`, `OverlayCleared`.
+
+---
+
+## 7. Exceptions
 
 All errors from the SDK are thrown as `CShieldException`:
 
