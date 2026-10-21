@@ -8,3 +8,4 @@ export 'src/api/aip/c_shield_interceptor.dart';
 export 'src/api/aip/c_shield_dio_interceptor.dart';
 export 'src/api/malware/c_shield_malware.dart';
 export 'src/api/malware/models.dart';
+export 'src/api/antioverlay/c_shield_anti_overlay.dart';

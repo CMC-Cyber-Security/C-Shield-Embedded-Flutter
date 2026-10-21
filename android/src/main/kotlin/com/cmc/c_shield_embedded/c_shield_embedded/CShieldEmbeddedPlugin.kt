@@ -1,12 +1,16 @@
 package com.cmc.c_shield_embedded.c_shield_embedded
 
+import android.app.Activity
 import android.content.Context
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AipBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiMalwareBridge
+import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiOverlayBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.SslBridge
 import com.cmc.cshield_embedded.CShieldSDK
 import com.cmc.cshield_embedded.license.models.LicenseCallback
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -16,7 +20,7 @@ import io.flutter.plugin.common.MethodChannel.Result
 /** CShieldEmbeddedPlugin */
 class CShieldEmbeddedPlugin :
     FlutterPlugin,
-    MethodCallHandler, EventChannel.StreamHandler {
+    MethodCallHandler, EventChannel.StreamHandler, ActivityAware {
     // The MethodChannel that will the communication between Flutter and native Android
     //
     // This local reference serves to register the plugin with the Flutter Engine and unregister it
@@ -30,6 +34,11 @@ class CShieldEmbeddedPlugin :
     private lateinit var sslBridge: SslBridge
     private lateinit var aipBridge: AipBridge
     private lateinit var malwareBridge: AntiMalwareBridge
+    private lateinit var antiOverlayBridge: AntiOverlayBridge
+
+    // Set/cleared by the ActivityAware callbacks; the anti-overlay guard needs the
+    // host Activity to wrap its window callback.
+    private var activity: Activity? = null
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         context = flutterPluginBinding.applicationContext
@@ -39,6 +48,7 @@ class CShieldEmbeddedPlugin :
         sslBridge = SslBridge()
         aipBridge = AipBridge(context)
         malwareBridge = AntiMalwareBridge(context)
+        antiOverlayBridge = AntiOverlayBridge({ activity }, { eventSink })
 
         channel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
@@ -72,6 +82,7 @@ class CShieldEmbeddedPlugin :
             call.method.startsWith("ssl.") -> sslBridge.handle(call, result)
             call.method.startsWith("aip.") -> aipBridge.handle(call, result)
             call.method.startsWith("malware.") -> malwareBridge.handle(call, result)
+            call.method.startsWith("antiOverlay.") -> antiOverlayBridge.handle(call, result)
             else -> result.notImplemented()
         }
     }
@@ -89,5 +100,24 @@ class CShieldEmbeddedPlugin :
 
     override fun onCancel(arguments: Any?) {
         eventSink = null
+    }
+
+    // ── ActivityAware ──────────────────────────────────────────────────────────
+    // Track the host Activity so AntiOverlayBridge can harden its window.
+
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        activity = binding.activity
+    }
+
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        activity = binding.activity
+    }
+
+    override fun onDetachedFromActivityForConfigChanges() {
+        activity = null
+    }
+
+    override fun onDetachedFromActivity() {
+        activity = null
     }
 }

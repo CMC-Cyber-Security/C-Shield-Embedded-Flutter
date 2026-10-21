@@ -85,4 +85,11 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   Future<ScannedPackage> analyzeInstalledApp(String packageName) => throw UnimplementedError();
 
   Future<void> stopScan() => throw UnimplementedError();
+
+  // ── Anti Overlay (Android only) ─────────────────────────────────────────────
+  // Runtime anti-tapjacking guard for the host's current screen. Obscured-screen
+  // callbacks are delivered over [events] as OverlayDetected / OverlayCleared.
+  Future<void> antiOverlayProtect({bool blockObscuredTouches = true}) => throw UnimplementedError();
+
+  Future<void> antiOverlayUnprotect() => throw UnimplementedError();
 }
