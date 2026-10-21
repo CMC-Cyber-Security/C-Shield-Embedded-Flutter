@@ -35,7 +35,11 @@ The SDK wraps native AAR (Android) and XCFramework (iOS) libraries, so the signi
    - 6.1 [Protecting a sensitive screen](#61-protecting-a-sensitive-screen)
    - 6.2 [Reacting to overlay events](#62-reacting-to-overlay-events)
    - 6.3 [API reference](#63-api-reference)
-7. [Exceptions](#7-exceptions)
+7. [Behavioral Touch Guard — Auto-Click Detection](#7-behavioral-touch-guard--auto-click-detection)
+   - 7.1 [Protecting a sensitive screen](#71-protecting-a-sensitive-screen)
+   - 7.2 [Reacting to touch-guard events](#72-reacting-to-touch-guard-events)
+   - 7.3 [API reference](#73-api-reference)
+8. [Exceptions](#8-exceptions)
 
 ---
 
@@ -722,7 +726,102 @@ Events (via `CShieldEmbedded.events`): `OverlayDetected(fullyObscured, partially
 
 ---
 
-## 7. Exceptions
+## 7. Behavioral Touch Guard — Auto-Click Detection
+
+A runtime guard that detects **machine-generated input** on the host app's **own sensitive screens** (OTP, money transfer, in-app purchase…) — auto-clickers (accessibility `dispatchGesture`), ADB `input tap`, UiAutomator, and root-level `/dev/input` injection.
+
+It wraps the current Activity's window (below the Flutter engine, so it sees every raw `MotionEvent`) and scores each touch from two tiers of evidence: **per-tap properties** (tool type, event source, physical device id) and **behaviour over recent taps** (coordinate jitter, tap rhythm/rate, pressure & size uniformity). When the risk score crosses the threshold your listener is notified; the touch is still delivered unless you enable blocking.
+
+It judges **human vs synthetic** — it does **not** identify *who* is tapping, so it is not behavioural biometrics and stores no biometric profile.
+
+> ⚠️ **Android only.** The guard relies on Android `MotionEvent`s; iOS has no equivalent, so `CShieldBehavioralTouchGuard.protect()` / `unprotect()` are not available on iOS (the method channel reports not-implemented). Guard calls with `Platform.isAndroid`.
+
+> This stacks cleanly with §6 on the same screen (both wrap the window callback and run). If you use both, call `unprotect()` in **reverse order** of `protect()`.
+
+### 7.1 Protecting a sensitive screen
+
+Opt-in **per screen** — call `protect()` when a sensitive screen appears and `unprotect()` when you leave it:
+
+```dart
+import 'dart:io' show Platform;
+import 'package:c_shield_embedded/c_shield_embedded.dart';
+
+class _OtpPageState extends State<OtpPage> {
+  @override
+  void initState() {
+    super.initState();
+    if (Platform.isAndroid) {
+      // Observe-only by default: suspicious taps are reported but still delivered.
+      CShieldBehavioralTouchGuard.protect();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (Platform.isAndroid) {
+      CShieldBehavioralTouchGuard.unprotect();
+    }
+    super.dispose();
+  }
+
+  // ... build()
+}
+```
+
+Tuning (all optional):
+
+```dart
+await CShieldBehavioralTouchGuard.protect(
+  riskThreshold: 60,                 // score (0..100) at/above which a touch is reported; omit for the native default
+  blockWhenDetected: true,           // also swallow the suspicious touch (default false — observe only)
+  includeAccessibilitySignal: true,  // add a weak signal when a 3rd-party accessibility service is enabled (default false)
+);
+```
+
+### 7.2 Reacting to touch-guard events
+
+Verdicts arrive on the shared `CShieldEmbedded.events` stream as `SuspiciousTouchDetected` / `TouchGuardCleared`:
+
+```dart
+late final StreamSubscription<CShieldEvent> _sub;
+
+@override
+void initState() {
+  super.initState();
+  _sub = CShieldEmbedded.events.listen((event) {
+    switch (event) {
+      case SuspiciousTouchDetected(:final riskScore, :final reasons):
+        // Warn the user / pause the sensitive action / log telemetry.
+        _showAutoClickWarning(riskScore, reasons);
+      case TouchGuardCleared():
+        _hideAutoClickWarning();
+      default:
+        break; // license / overlay events, etc.
+    }
+  });
+}
+
+@override
+void dispose() {
+  _sub.cancel();
+  super.dispose();
+}
+```
+
+`SuspiciousTouchDetected` carries `riskScore` (0..100) and `reasons` — the signals that made up the score, as native `TouchGuardReason` names (e.g. `VIRTUAL_INPUT_DEVICE`, `ZERO_COORDINATE_JITTER`, `UNIFORM_TAP_INTERVAL`). `TouchGuardCleared` fires once when input looks human again.
+
+### 7.3 API reference
+
+| Method | Platform | Description |
+|---|---|---|
+| `protect({int? riskThreshold, bool blockWhenDetected = false, bool includeAccessibilitySignal = false})` | Android | Hardens the current screen; reports suspicious touches (and swallows them when `blockWhenDetected`) |
+| `unprotect()` | Android | Removes the guard, restoring normal touch handling |
+
+Events (via `CShieldEmbedded.events`): `SuspiciousTouchDetected(riskScore, reasons)`, `TouchGuardCleared`.
+
+---
+
+## 8. Exceptions
 
 All errors from the SDK are thrown as `CShieldException`:
 

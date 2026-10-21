@@ -92,4 +92,16 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   Future<void> antiOverlayProtect({bool blockObscuredTouches = true}) => throw UnimplementedError();
 
   Future<void> antiOverlayUnprotect() => throw UnimplementedError();
+
+  // ── Behavioral Touch Guard (Android only) ───────────────────────────────────
+  // Detects machine-generated input on the host's current screen. Verdicts are
+  // delivered over [events] as SuspiciousTouchDetected / TouchGuardCleared.
+  Future<void> btgProtect({
+    int? riskThreshold,
+    bool blockWhenDetected = false,
+    bool includeAccessibilitySignal = false,
+  }) =>
+      throw UnimplementedError();
+
+  Future<void> btgUnprotect() => throw UnimplementedError();
 }
