@@ -16,6 +16,13 @@ sealed class CShieldEvent {
         );
       case 'onOverlayCleared':
         return const OverlayCleared();
+      case 'onSuspiciousTouchDetected':
+        return SuspiciousTouchDetected(
+          riskScore: map['riskScore'] as int? ?? 0,
+          reasons: (map['reasons'] as List?)?.cast<String>() ?? const <String>[],
+        );
+      case 'onTouchGuardCleared':
+        return const TouchGuardCleared();
       default:
         throw ArgumentError('Unknown event: $event');
     }
@@ -49,4 +56,22 @@ class OverlayDetected extends CShieldEvent {
 /// A previously obscured protected screen is clear again.
 class OverlayCleared extends CShieldEvent {
   const OverlayCleared();
+}
+
+/// A protected screen (see [CShieldBehavioralTouchGuard]) received input that
+/// looks machine-generated (auto-clicker, ADB `input tap`, injected event).
+class SuspiciousTouchDetected extends CShieldEvent {
+  /// Confidence that the input is synthetic, 0..100.
+  final int riskScore;
+
+  /// The signals that made up [riskScore] (native `TouchGuardReason` names).
+  final List<String> reasons;
+
+  const SuspiciousTouchDetected({required this.riskScore, required this.reasons});
+}
+
+/// Input on a protected screen looks human again after a prior
+/// [SuspiciousTouchDetected].
+class TouchGuardCleared extends CShieldEvent {
+  const TouchGuardCleared();
 }

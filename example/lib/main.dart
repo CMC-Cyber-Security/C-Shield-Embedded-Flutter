@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:c_shield_embedded/c_shield_embedded.dart';
@@ -74,6 +76,9 @@ class _OtpPageState extends State<OtpPage> {
   String _result = '';
   bool? _success;
 
+  StreamSubscription<CShieldEvent>? _btgSub;
+  String? _btgStatus;
+
   @override
   initState() {
     try {
@@ -85,11 +90,26 @@ class _OtpPageState extends State<OtpPage> {
       });
     }
 
+    // Behavioral Touch Guard: OTP là màn nhạy cảm — bật phát hiện auto-click.
+    // Observe-only (blockWhenDetected: false); verdict tới qua CShieldEmbedded.events.
+    CShieldBehavioralTouchGuard.protect(blockWhenDetected: false);
+    _btgSub = CShieldEmbedded.events.listen((event) {
+      if (!mounted) return;
+      if (event is SuspiciousTouchDetected) {
+        setState(() => _btgStatus =
+            'Nghi ngờ auto-click (score=${event.riskScore}): ${event.reasons.join(', ')}');
+      } else if (event is TouchGuardCleared) {
+        setState(() => _btgStatus = null);
+      }
+    });
+
     super.initState();
   }
 
   @override
   void dispose() {
+    _btgSub?.cancel();
+    CShieldBehavioralTouchGuard.unprotect();
     _controller.dispose();
     _dio?.close();
     super.dispose();
@@ -173,6 +193,28 @@ class _OtpPageState extends State<OtpPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (_btgStatus != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _btgStatus!,
+                        style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 32),
             TextField(
               controller: _controller,

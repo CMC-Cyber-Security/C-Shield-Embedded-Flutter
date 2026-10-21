@@ -35,4 +35,11 @@ class CShieldChannels {
   // as OverlayDetected / OverlayCleared events. Android-only.
   static const String antiOverlayProtect = 'antiOverlay.protect';
   static const String antiOverlayUnprotect = 'antiOverlay.unprotect';
+
+  // Behavioral Touch Guard — runtime detection of machine-generated input
+  // (auto-clicker, `adb shell input tap`, injected events). protect() hardens
+  // the host's current Activity window; suspicious-touch callbacks arrive over
+  // [eventChannel] as SuspiciousTouchDetected / TouchGuardCleared. Android-only.
+  static const String btgProtect = 'btg.protect';
+  static const String btgUnprotect = 'btg.unprotect';
 }

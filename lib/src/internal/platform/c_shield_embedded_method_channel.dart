@@ -132,4 +132,21 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
 
   @override
   Future<void> antiOverlayUnprotect() => _invoke(CShieldChannels.antiOverlayUnprotect);
+
+  // ── Behavioral Touch Guard ──────────────────────────────────────────────────
+
+  @override
+  Future<void> btgProtect({
+    int? riskThreshold,
+    bool blockWhenDetected = false,
+    bool includeAccessibilitySignal = false,
+  }) =>
+      _invoke(CShieldChannels.btgProtect, {
+        if (riskThreshold != null) 'riskThreshold': riskThreshold,
+        'blockWhenDetected': blockWhenDetected,
+        'includeAccessibilitySignal': includeAccessibilitySignal,
+      });
+
+  @override
+  Future<void> btgUnprotect() => _invoke(CShieldChannels.btgUnprotect);
 }

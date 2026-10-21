@@ -5,6 +5,7 @@ import android.content.Context
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AipBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiMalwareBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiOverlayBridge
+import com.cmc.c_shield_embedded.c_shield_embedded.bridges.BehavioralTouchGuardBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.SslBridge
 import com.cmc.cshield_embedded.CShieldSDK
 import com.cmc.cshield_embedded.license.models.LicenseCallback
@@ -35,6 +36,7 @@ class CShieldEmbeddedPlugin :
     private lateinit var aipBridge: AipBridge
     private lateinit var malwareBridge: AntiMalwareBridge
     private lateinit var antiOverlayBridge: AntiOverlayBridge
+    private lateinit var btgBridge: BehavioralTouchGuardBridge
 
     // Set/cleared by the ActivityAware callbacks; the anti-overlay guard needs the
     // host Activity to wrap its window callback.
@@ -49,6 +51,7 @@ class CShieldEmbeddedPlugin :
         aipBridge = AipBridge(context)
         malwareBridge = AntiMalwareBridge(context)
         antiOverlayBridge = AntiOverlayBridge({ activity }, { eventSink })
+        btgBridge = BehavioralTouchGuardBridge({ activity }, { eventSink })
 
         channel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
@@ -83,6 +86,7 @@ class CShieldEmbeddedPlugin :
             call.method.startsWith("aip.") -> aipBridge.handle(call, result)
             call.method.startsWith("malware.") -> malwareBridge.handle(call, result)
             call.method.startsWith("antiOverlay.") -> antiOverlayBridge.handle(call, result)
+            call.method.startsWith("btg.") -> btgBridge.handle(call, result)
             else -> result.notImplemented()
         }
     }
