@@ -4,9 +4,11 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.cmc.c_shield_embedded.c_shield_embedded.CShieldErrorCode
+import com.cmc.cshield_embedded.CShieldSDK
 import com.cmc.cshield_embedded.aip.api.AIPCore
 import com.cmc.cshield_embedded.aip.signing.HardwareRequestSigner
 import com.cmc.cshield_embedded.aip.signing.RequestContext
+import com.cmc.cshield_embedded.common.CShieldNotReadyException
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlin.collections.mutableMapOf
@@ -26,8 +28,19 @@ class AipBridge(private val context: Context) {
         when (call.method) {
             "aip.verify" -> handleVerify(call, result)
             "aip.signRequest" -> handleSignRequest(call, result)
+            "aip.forceRefresh" -> handleForceRefresh(call, result)
             else -> result.notImplemented()
         }
+    }
+
+    // Force refresh token khi server 401 invalid-token (Dart interceptor gọi rồi retry request).
+    // Chạy thread nền (forceRefresh block ≤ timeoutMs). Trả Boolean = đã sẵn sàng (có token mới) chưa.
+    private fun handleForceRefresh(call: MethodCall, result: MethodChannel.Result) {
+        val timeoutMs = (call.argument<Int>("timeoutMs") ?: 5000).toLong()
+        Thread {
+            val ok = runCatching { CShieldSDK.forceRefresh(timeoutMs) }.getOrDefault(false)
+            mainHandler.post { result.success(ok) }
+        }.start()
     }
 
     private fun handleVerify(call: MethodCall, result: MethodChannel.Result) {
@@ -72,6 +85,15 @@ class AipBridge(private val context: Context) {
                 )
                 val signature = requestSigner.sign(ctx)
                 mainHandler.post { result.success(signature.fold(mutableMapOf<String, String>()) { m, it -> m.apply { put(it.name, it.value) } }) }
+            } catch (e: CShieldNotReadyException) {
+                // FL-2: giữ phân loại (retryable/state) qua details thay vì ép phẳng thành aip_signing_failed.
+                mainHandler.post {
+                    result.error(
+                        CShieldErrorCode.NOT_READY,
+                        e.reason,
+                        mapOf("retryable" to e.retryable, "state" to e.state.name),
+                    )
+                }
             } catch (e: Throwable) {
                 mainHandler.post { result.error(CShieldErrorCode.AIP_SIGNING_FAILED, e.message, null) }
             }

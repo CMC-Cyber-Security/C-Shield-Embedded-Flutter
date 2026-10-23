@@ -24,7 +24,18 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
     try {
       return await methodChannel.invokeMethod<T>(method, args) as T;
     } on PlatformException catch (e) {
-      throw CShieldException(CShieldErrorCode.fromPlatformCode(e.code), e.message ?? e.code, e);
+      // Giữ phân loại retryable/state mà native gửi kèm (vd not_ready) — trước đây `details` bị bỏ
+      // và "not_ready" rơi về nativeError, mất sạch thông tin để app xử lý (chờ/retry vs block).
+      bool? retryable;
+      String? state;
+      final details = e.details;
+      if (details is Map) {
+        final r = details['retryable'];
+        if (r is bool) retryable = r;
+        final s = details['state'];
+        if (s is String) state = s;
+      }
+      throw CShieldException(CShieldErrorCode.fromPlatformCode(e.code), e.message ?? e.code, e, retryable, state);
     }
   }
 
@@ -98,6 +109,10 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
         'timestampSec': timestampSec,
         'bodyHashHex': bodyHashHex,
       });
+
+  @override
+  Future<bool> aipForceRefresh({int timeoutMs = 5000}) =>
+      _invoke<bool>(CShieldChannels.aipForceRefresh, {'timeoutMs': timeoutMs});
 
   @override
   Future<DeviceScanResult> scanDevice() async {

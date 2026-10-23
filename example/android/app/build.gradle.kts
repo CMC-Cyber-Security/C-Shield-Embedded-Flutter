@@ -25,18 +25,13 @@ android {
     }
 
     signingConfigs {
-        create("debug-build") {
-            storeFile = file("../keystore/flutter-cshield-debug.jks")
-            storePassword = project.property("DEBUG_KEYSTORE_PASSWORD") as String
-            keyAlias = project.property("DEBUG_KEY_ALIAS") as String
-            keyPassword = project.property("DEBUG_KEYSTORE_PASSWORD") as String
-        }
-
-        create("release-build") {
-            storeFile = file("../keystore/flutter-cshield-release.jks")
-            storePassword = project.property("RELEASE_KEYSTORE_PASSWORD") as String
-            keyAlias = project.property("RELEASE_KEY_ALIAS") as String
-            keyPassword = project.property("RELEASE_KEYSTORE_PASSWORD") as String
+        // Dùng CHUNG một key với Android sample (keystore_release.jks) cho CẢ debug + release:
+        // cùng package name + cùng signing cert ⇒ attestation/registration hành xử y hệt app native.
+        create("shared") {
+            storeFile = file("../keystore/keystore_release.jks")
+            storePassword = "cshield"
+            keyAlias = "key-alias"
+            keyPassword = "cshield"
         }
     }
 
@@ -53,10 +48,10 @@ android {
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("debug-build")
+            signingConfig = signingConfigs.getByName("shared")
         }
         release {
-            signingConfig = signingConfigs.getByName("release-build")
+            signingConfig = signingConfigs.getByName("shared")
         }
     }
 }
@@ -74,8 +69,18 @@ dependencies {
     debugImplementation(files("libs/cshield-embedded-debug.aar"))
     releaseImplementation(files("libs/cshield-embedded-release.aar"))
 
+    // Runtime deps của AAR (plugin dùng compileOnly + AAR qua files() ⇒ KHÔNG tự kéo transitive).
+    // Phải khớp version SDK dùng khi build AAR.
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+    // Attestation (Play Integrity) — thiếu thì SDK degrade KA-only (L3) thay vì L4/L5.
+    implementation("com.google.android.play:integrity:1.4.0")
+    // Anti-malware archive scan (commons-compress + xz cho 7z LZMA + junrar cho RAR).
+    implementation("org.apache.commons:commons-compress:1.26.1")
+    implementation("org.tukaani:xz:1.9")
+    implementation("com.github.junrar:junrar:7.5.4")
 }
 
 // The `integration_test` package pulls in androidx.test.espresso:espresso-core:3.2+,

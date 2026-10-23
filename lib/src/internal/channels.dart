@@ -23,6 +23,8 @@ class CShieldChannels {
   // done in Dart (CShieldAIP / AIPNormalizer).
   static const String aipVerify = 'aip.verify';
   static const String aipSignRequest = 'aip.signRequest';
+  // Force refresh token khi server 401 invalid-token → trả bool (đã sẵn sàng chưa).
+  static const String aipForceRefresh = 'aip.forceRefresh';
 
   static const String malwareScanDevice = 'malware.scanDevice';
   static const String malwareAnalyzeApkFile = 'malware.analyzeApkFile';

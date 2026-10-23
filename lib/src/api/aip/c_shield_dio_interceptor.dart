@@ -38,10 +38,20 @@ class CShieldDioInterceptor extends Interceptor {
   /// KHÔNG ký + KHÔNG verify response (ký chọn lọc vài API).
   final bool Function(RequestOptions options)? signWhen;
 
-  const CShieldDioInterceptor({this.verifyResponses = true, this.signWhen});
+  /// Dio để **gửi lại** request khi server 401 invalid-token (force refresh token rồi thử lại 1
+  /// lần). Phải là CHÍNH Dio mà interceptor này gắn vào (để lượt retry ký lại + verify qua
+  /// interceptor). `null` → KHÔNG tự retry (vẫn trả 401 cho app). Cách dùng:
+  /// ```dart
+  /// final dio = Dio();
+  /// dio.interceptors.add(CShieldDioInterceptor(dio: dio));
+  /// ```
+  final Dio? dio;
+
+  const CShieldDioInterceptor({this.verifyResponses = true, this.signWhen, this.dio});
 
   static const _kOriginalResponseType = '_cshield_original_response_type';
   static const _kSkipAip = '_cshield_skip_aip';
+  static const _kRetried = '_cshield_retried_invalid_token';
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
@@ -97,7 +107,45 @@ class CShieldDioInterceptor extends Interceptor {
   }
 
   @override
-  void onError(DioException err, ErrorInterceptorHandler handler) => handler.next(err);
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    final opts = err.requestOptions;
+    final response = err.response;
+    // 401 invalid-token → force refresh token rồi gửi lại ĐÚNG 1 lần (qua chính Dio để lượt retry
+    // ký lại + verify qua interceptor; cờ _kRetried chặn lặp). Cần `dio`; không có → trả 401 như cũ.
+    if (dio != null &&
+        response != null &&
+        opts.extra[_kSkipAip] != true &&
+        opts.extra[_kRetried] != true) {
+      final bytes = _responseBytes(response.data);
+      if (bytes != null &&
+          CShieldAIP.isInvalidAccessToken(response.statusCode ?? 0, bytes) &&
+          await CShieldAIP.forceRefresh()) {
+        opts.extra[_kRetried] = true;
+        try {
+          final retried = await dio!.fetch(opts);
+          return handler.resolve(retried);
+        } on DioException catch (e) {
+          return handler.next(e);
+        } catch (_) {
+          return handler.next(err);
+        }
+      }
+    }
+    handler.next(err);
+  }
+
+  /// Lấy bytes thô từ response.data (đã set ResponseType.bytes khi verifyResponses). Không phải
+  /// bytes → thử encode để dò mã lỗi.
+  static Uint8List? _responseBytes(dynamic data) {
+    if (data == null) return null;
+    if (data is Uint8List) return data;
+    if (data is List<int>) return Uint8List.fromList(data);
+    if (data is String) return Uint8List.fromList(utf8.encode(data));
+    if (data is Map || data is List) {
+      return Uint8List.fromList(utf8.encode(jsonEncode(data)));
+    }
+    return null;
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 

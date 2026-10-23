@@ -7,6 +7,14 @@ enum CShieldErrorCode {
   sslNotConfigured('ssl_not_configured'),
   sslPinMismatch('ssl_pin_mismatch'),
   notInitialized('not_initialized'),
+
+  /// Attestation chưa sẵn sàng khi ký request (hardware key/token chưa có). Native gửi kèm
+  /// [CShieldException.retryable] + [CShieldException.state] để phân luồng xử lý:
+  ///  - `retryable == true` (INITIALIZING / lỗi tạm thời) → chờ sẵn sàng rồi thử lại.
+  ///  - `retryable == false` (state `UNAVAILABLE`) → lỗi vĩnh viễn, ĐỪNG retry; đọc [CShieldException.message]
+  ///    (mã lỗi ổn định: `device_blocked` / `attestation_not_enabled` / `device_unsupported` / … ) để xử lý.
+  notReady('not_ready'),
+
   invalidArgument('invalid_argument'),
   nativeError('native_error');
 
@@ -23,8 +31,19 @@ class CShieldException implements Exception {
   final String message;
   final Object? nativeCause;
 
-  const CShieldException(this.code, this.message, [this.nativeCause]);
+  /// Chỉ có nghĩa với [CShieldErrorCode.notReady]: `true` nếu nên chờ/thử lại (tạm thời),
+  /// `false` nếu vĩnh viễn (ĐỪNG retry). `null` với các lỗi khác.
+  final bool? retryable;
+
+  /// Tên trạng thái attestation native khi biết được: `INITIALIZING` / `READY` / `DEGRADED` /
+  /// `UNAVAILABLE`. `null` với các lỗi không mang trạng thái.
+  final String? state;
+
+  const CShieldException(this.code, this.message, [this.nativeCause, this.retryable, this.state]);
 
   @override
-  String toString() => 'CShieldException(${code.name}): $message';
+  String toString() {
+    final extra = code == CShieldErrorCode.notReady ? ' [retryable=$retryable, state=$state]' : '';
+    return 'CShieldException(${code.name}): $message$extra';
+  }
 }

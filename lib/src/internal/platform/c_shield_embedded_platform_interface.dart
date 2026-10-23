@@ -75,6 +75,9 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   }) =>
       throw UnimplementedError();
 
+  /// Force refresh token khi server 401 invalid-token. Trả `true` nếu sau đó đã sẵn sàng.
+  Future<bool> aipForceRefresh({int timeoutMs = 5000}) => throw UnimplementedError();
+
   // ── Anti Malware ──────────────────────────────────────────────────────────────────
   Future<DeviceScanResult> scanDevice() => throw UnimplementedError();
 

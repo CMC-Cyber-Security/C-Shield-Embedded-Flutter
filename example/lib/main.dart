@@ -4,9 +4,16 @@ import 'package:c_shield_embedded/c_shield_embedded.dart';
 
 import 'anti_malware_scan_page.dart';
 
-const baseUrl = 'https://demo-spring-server.onrender.com';
-const sslHostname = 'demo-spring-server.onrender.com';
-const sslPins = ['sha256/kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4='];
+// Cấu hình Y HỆT Android sample: gọi demo-nodejs-server (Node SDK) + pin `**.onrender.com`.
+const baseUrl = 'https://demo-nodejs-server-1ina.onrender.com';
+// Pin cho *.onrender.com (leaf CN=onrender.com + 4 intermediate GTS WE1..WE4). Khớp Android ONRENDER_PINS.
+const onrenderPins = [
+  'sha256/fizfE9JVlzlRplEx7epXfqW9enrbLvwF/LU26XTPEG4=', // leaf   CN=onrender.com
+  'sha256/kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=', // interm GTS WE1
+  'sha256/vh78KSg1Ry4NaqGDV10w/cTb9VH3BQUZoCWNa93W/EY=', // interm GTS WE2
+  'sha256/daBIAnKdRIX3bqM85I6We7wBUh0DPycNFBMvYkXGX2Q=', // interm GTS WE3
+  'sha256/O5TQDB/wa4SkRjBrQL2Aq9CG317H9MDDgpTVcrpJDa4=', // interm GTS WE4
+];
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,7 +22,7 @@ void main() async {
       license:
           'eyJraWQiOiJmOTE1NTUzOC02MzA4LTQ4MjctOTRiMy02NTA1ZGQ1YTZiZWUiLCJhbGciOiJSUzI1NiJ9.eyJqdGkiOiJmOTE1NTUzOC02MzA4LTQ4MjctOTRiMy02NTA1ZGQ1YTZiZWUiLCJpc3MiOiJwcm9tb24tbGljZW5zZSIsInN1YiI6IkNNQ0NTIiwiaWF0IjoxNzkwOTMyOTE4LCJuYmYiOjE3OTA4OTkyMDAsImV4cCI6NDEzMzk4MDc5OSwiYXBwbGljYXRpb25JZCI6ImNzaGllbGQtZW1iZWRkZWQtc2FtcGxlIiwicGFja2FnZUlkIjoiY29tLmNtYy5leGFtcGxlLmNzaGllbGRlbWJlZGRlZCIsImJ1bmRsZUlkIjoiY29tLmNtYy5leGFtcGxlLmNzaGllbGRlbWJlZGRlZCIsIm1vZHVsZXMiOlsiU0hJRUxEIl0sInBsYXRmb3JtcyI6WyJBTkRST0lEIiwiSU9TIl0sImVudmlyb25tZW50cyI6WyJQUk9EIiwiU1RBR0lORyIsIkRFViJdLCJvZmZsaW5lR3JhY2VEYXlzIjowfQ.FE-CTqKnXYnHoCH9YV9xdvM0ImggoqFbNEAHBvJk3HeWWbAs80BfQmnHHUdJnutZM1km_Sk2NX5Nv8SF-1NlAyCGv-ftYwBFq2DloraaiUR4v3JImPxf8h6xJS_Gfn_nbSikYt4GsvqDKsgp9zEFeMwZijC3RAGMdGXLzPF17judO4OucVV6DREv-UXlbhFTGnQTBCac0nR9eS94Sq7SVPA8csuRguc7Y1vxz_zH1q7GQyt91aYlEZ1AUOA-8n8BZt3PHO7WRZ2R53F3XQR30Oc-wxgeDPgYHV0vKC2SGTr6dpQtIoBM_bAWZyVtI-SQiMkqO7P_cwgURMAYFYsWZQ');
   try {
-    await CShieldSSL.configure(pins: sslPins, hostname: sslHostname);
+    await CShieldSSL.configureHosts(pinsByHost: {'**.onrender.com': onrenderPins});
   } on CShieldException catch (e) {
     // e.g. CShieldErrorCode.invalidArgument (bad pins/hostname) or a native
     // failure. Handle per e.code as needed; here we just log and continue.
@@ -55,7 +62,8 @@ Dio buildDio() {
   } catch (e) {
     rethrow;
   }
-  dio.interceptors.add(const CShieldDioInterceptor());
+  // Truyền `dio` để interceptor tự force-refresh + retry khi server 401 invalid-token.
+  dio.interceptors.add(CShieldDioInterceptor(dio: dio));
   return dio;
 }
 
