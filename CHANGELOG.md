@@ -1,3 +1,8 @@
+## 1.0.4
+
+- add device attestation API (`CShieldAttest`): readiness state/`awaitReady`/state stream, trust level L0–L5 and on-demand `ensureTrust` (Play Integrity) — Android
+- add `onNotReady` policy and per-request `requiredLevel` to `CShieldInterceptor` / `CShieldDioInterceptor`
+
 ## 1.0.3
 
 - add Key Attestation to request signing and canonical query handling to AIP

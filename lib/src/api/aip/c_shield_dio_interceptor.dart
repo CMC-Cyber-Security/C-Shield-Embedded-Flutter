@@ -4,7 +4,11 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import '../../internal/aip/aip_normalizer.dart';
+import '../attest/c_shield_attest.dart';
+import '../attest/trust_level.dart';
+import '../exceptions/c_shield_exception.dart';
 import 'c_shield_aip.dart';
+import 'on_not_ready.dart';
 
 /// A Dio [Interceptor] that automatically signs every outgoing request
 /// and verifies every incoming response using CShield AIP.
@@ -47,11 +51,37 @@ class CShieldDioInterceptor extends Interceptor {
   /// ```
   final Dio? dio;
 
-  const CShieldDioInterceptor({this.verifyResponses = true, this.signWhen, this.dio});
+  /// Chính sách khi attestation chưa sẵn sàng. Mặc định [OnNotReady.failFast] (fail-closed).
+  final OnNotReady onNotReady;
+
+  /// Gắn mức trust tối thiểu cho endpoint nhạy (vd ≥L4): trả mức cần cho request đó, else `null`.
+  /// Trước khi ký, interceptor CHỦ ĐỘNG gọi [CShieldAttest.ensureTrust] để nâng (Play Integrity)
+  /// nếu thiếu — best-effort, KHÔNG chặn ở client (server mới là nơi chốt trust). Mặc định `null`:
+  /// ```dart
+  /// dio.interceptors.add(CShieldDioInterceptor(
+  ///   dio: dio,
+  ///   requiredLevel: (o) => o.path == '/payment' ? TrustLevel.l4 : null,
+  /// ));
+  /// ```
+  final TrustLevel? Function(RequestOptions options)? requiredLevel;
+
+  const CShieldDioInterceptor({
+    this.verifyResponses = true,
+    this.signWhen,
+    this.dio,
+    this.onNotReady = OnNotReady.failFast,
+    this.requiredLevel,
+  });
 
   static const _kOriginalResponseType = '_cshield_original_response_type';
   static const _kSkipAip = '_cshield_skip_aip';
   static const _kRetried = '_cshield_retried_invalid_token';
+
+  /// Chờ ngắn khi [OnNotReady.blockRetry] — không treo UI lâu.
+  static const _blockRetryWaitMs = 2000;
+
+  /// `ensureTrust` có thể phải chạy Play Integrity (prepare + request) → cho thời gian rộng hơn.
+  static const _ensureTrustTimeoutMs = 15000;
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
@@ -60,24 +90,68 @@ class CShieldDioInterceptor extends Interceptor {
       handler.next(options);
       return;
     }
+    // Endpoint nhạy được gắn mức: chủ động nâng trust TRƯỚC khi ký (best-effort). KHÔNG chặn theo
+    // kết quả — server mới chốt trust; nâng không đạt thì request vẫn gửi và server tự từ chối với
+    // tín hiệu phù hợp (CSHIELD_DEVICE_NOT_ALLOWED / CSHIELD_TRUST_NOT_FRESH).
     try {
-      final aipHeaders = await CShieldAIP.signRequest(
-        method: options.method,
-        path: options.uri.path,
-        query: options.uri.query,
-        body: _requestBodyBytes(options),
-        contentType: _contentType(options),
-      );
-      options.headers.addAll(aipHeaders);
-
-      if (verifyResponses) {
-        options.extra[_kOriginalResponseType] = options.responseType;
-        options.responseType = ResponseType.bytes;
-      }
-
+      await _ensureTrustBestEffort(requiredLevel?.call(options));
+      await _sign(options);
       handler.next(options);
+    } on CShieldException catch (e, st) {
+      if (e.code != CShieldErrorCode.notReady) {
+        handler.reject(DioException(requestOptions: options, error: e, stackTrace: st));
+        return;
+      }
+      switch (onNotReady) {
+        case OnNotReady.failFast:
+          handler.reject(DioException(requestOptions: options, error: e, stackTrace: st));
+        case OnNotReady.passThrough:
+          options.extra[_kSkipAip] = true; // gửi KHÔNG ký → onResponse bỏ verify
+          handler.next(options);
+        case OnNotReady.blockRetry:
+          if (e.retryable == false) {
+            handler.reject(DioException(requestOptions: options, error: e, stackTrace: st));
+            return;
+          }
+          await CShieldAttest.awaitReady(timeoutMs: _blockRetryWaitMs);
+          try {
+            await _sign(options); // thử lại ĐÚNG 1 lần; vẫn fail → reject
+            handler.next(options);
+          } catch (e2, st2) {
+            handler.reject(DioException(requestOptions: options, error: e2, stackTrace: st2));
+          }
+      }
     } catch (e, st) {
       handler.reject(DioException(requestOptions: options, error: e, stackTrace: st));
+    }
+  }
+
+  /// Nâng trust trước khi ký — BEST-EFFORT: lỗi native (vd attest chưa khả dụng) KHÔNG được chặn
+  /// request, vì server mới là nơi chốt trust và sẽ trả tín hiệu phù hợp.
+  static Future<void> _ensureTrustBestEffort(TrustLevel? level) async {
+    if (level == null || level == TrustLevel.unknown) return;
+    try {
+      await CShieldAttest.ensureTrust(level, timeoutMs: _ensureTrustTimeoutMs);
+    } on CShieldException catch (_) {
+      // bỏ qua — vẫn gửi request với trust hiện có
+    }
+  }
+
+  /// Ký [options] + gắn header `cs-proof`, và (khi [verifyResponses]) ép [ResponseType.bytes] để
+  /// onResponse đọc được bytes thô mà verify chữ ký.
+  Future<void> _sign(RequestOptions options) async {
+    final aipHeaders = await CShieldAIP.signRequest(
+      method: options.method,
+      path: options.uri.path,
+      query: options.uri.query,
+      body: _requestBodyBytes(options),
+      contentType: _contentType(options),
+    );
+    options.headers.addAll(aipHeaders);
+
+    if (verifyResponses) {
+      options.extra[_kOriginalResponseType] = options.responseType;
+      options.responseType = ResponseType.bytes;
     }
   }
 

@@ -1,3 +1,6 @@
+import 'package:c_shield_embedded/src/api/attest/c_shield_state.dart';
+import 'package:c_shield_embedded/src/api/attest/ensure_trust_result.dart';
+import 'package:c_shield_embedded/src/api/attest/trust_level.dart';
 import 'package:c_shield_embedded/src/api/exceptions/c_shield_exception.dart';
 import 'package:c_shield_embedded/src/api/event/c_shield_event.dart';
 import 'package:c_shield_embedded/src/api/malware/models.dart';
@@ -36,6 +39,17 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
         if (s is String) state = s;
       }
       throw CShieldException(CShieldErrorCode.fromPlatformCode(e.code), e.message ?? e.code, e, retryable, state);
+    }
+  }
+
+  /// Như [_invoke] nhưng nuốt [MissingPluginException] → `null`: nền tảng chưa cài đặt method đó
+  /// (iOS chưa có attest v2) thì coi là "không khả dụng" thay vì nổ lên app. Lỗi native THẬT
+  /// (PlatformException) vẫn ném như thường.
+  Future<T?> _invokeOptional<T>(String method, [dynamic args]) async {
+    try {
+      return await _invoke<T?>(method, args);
+    } on MissingPluginException {
+      return null;
     }
   }
 
@@ -110,9 +124,42 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
         'bodyHashHex': bodyHashHex,
       });
 
+  // Nền tảng chưa có attest v2 (iOS) → không có method này: coi như "không refresh được" (false)
+  // thay vì để MissingPluginException nổ ra khỏi interceptor giữa luồng retry 401.
   @override
-  Future<bool> aipForceRefresh({int timeoutMs = 5000}) =>
-      _invoke<bool>(CShieldChannels.aipForceRefresh, {'timeoutMs': timeoutMs});
+  Future<bool> aipForceRefresh({int timeoutMs = 5000}) async =>
+      await _invokeOptional<bool>(CShieldChannels.aipForceRefresh, {'timeoutMs': timeoutMs}) ?? false;
+
+  // ── Attestation v2 ────────────────────────────────────────────────────────
+  // Native trả TÊN enum (String); map về enum Dart ở đây — một chỗ duy nhất. Thiếu method (nền
+  // tảng chưa hỗ trợ) → null → fromId trả mức "không khả dụng" (fail-closed).
+
+  @override
+  Future<CShieldState> attestState() async =>
+      CShieldState.fromId(await _invokeOptional<String>(CShieldChannels.attestState));
+
+  @override
+  Future<String?> attestLastError() => _invokeOptional<String>(CShieldChannels.attestLastError);
+
+  @override
+  Future<CShieldState> attestAwaitReady({int timeoutMs = 8000}) async => CShieldState.fromId(
+      await _invokeOptional<String>(CShieldChannels.attestAwaitReady, {'timeoutMs': timeoutMs}));
+
+  @override
+  Future<TrustLevel> attestCurrentTrustLevel() async =>
+      TrustLevel.fromId(await _invokeOptional<String>(CShieldChannels.attestCurrentTrustLevel));
+
+  @override
+  Future<EnsureTrustResult> attestEnsureTrust({
+    required TrustLevel minLevel,
+    bool requireFresh = false,
+    int timeoutMs = 15000,
+  }) async =>
+      EnsureTrustResult.fromId(await _invokeOptional<String>(CShieldChannels.attestEnsureTrust, {
+        'minLevel': minLevel.id,
+        'requireFresh': requireFresh,
+        'timeoutMs': timeoutMs,
+      }));
 
   @override
   Future<DeviceScanResult> scanDevice() async {

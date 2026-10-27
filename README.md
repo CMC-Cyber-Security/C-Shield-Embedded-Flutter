@@ -18,20 +18,27 @@ The SDK wraps native AAR (Android) and XCFramework (iOS) libraries, so the signi
    - 3.2 [Automatic mode — CShieldDioInterceptor (Dio)](#32-automatic-mode--cshielddiointerceptor-dio)
    - 3.3 [Manual mode — CShieldAIP](#33-manual-mode--cshieldaip)
    - 3.4 [Signing protocol](#34-signing-protocol)
-4. [SSL — Certificate Pinning](#4-ssl--certificate-pinning)
-   - 4.1 [Obtaining pin values](#41-obtaining-pin-values)
-   - 4.2 [Configuring CShieldSSL](#42-configuring-cshieldssl)
-   - 4.3 [Integrating with the http package](#43-integrating-with-the-http-package)
-   - 4.4 [Integrating with Dio](#44-integrating-with-dio)
-   - 4.5 [Manual verification](#45-manual-verification)
-   - 4.6 [Capabilities, limitations, and recommendations](#46-capabilities-limitations-and-recommendations)
-5. [Malware — On-Device Threat Scanning](#5-malware--on-device-threat-scanning)
-   - 5.1 [Permissions (Android)](#51-permissions-android)
-   - 5.2 [Scanning the whole device](#52-scanning-the-whole-device)
-   - 5.3 [Analyzing a single app or APK file](#53-analyzing-a-single-app-or-apk-file)
-   - 5.4 [Result models](#54-result-models)
-   - 5.5 [API reference](#55-api-reference)
-6. [Exceptions](#6-exceptions)
+4. [Attestation — Device Trust (L0–L5)](#4-attestation--device-trust-l0l5)
+   - 4.1 [Trust levels and the cheap-by-default model](#41-trust-levels-and-the-cheap-by-default-model)
+   - 4.2 [Readiness — state, awaitReady, stateChanges](#42-readiness--state-awaitready-statechanges)
+   - 4.3 [Raising trust — ensureTrust](#43-raising-trust--ensuretrust)
+   - 4.4 [Letting the interceptor raise trust](#44-letting-the-interceptor-raise-trust)
+   - 4.5 [Server error codes → what the app should do](#45-server-error-codes--what-the-app-should-do)
+   - 4.6 [API reference](#46-api-reference)
+5. [SSL — Certificate Pinning](#5-ssl--certificate-pinning)
+   - 5.1 [Obtaining pin values](#51-obtaining-pin-values)
+   - 5.2 [Configuring CShieldSSL](#52-configuring-cshieldssl)
+   - 5.3 [Integrating with the http package](#53-integrating-with-the-http-package)
+   - 5.4 [Integrating with Dio](#54-integrating-with-dio)
+   - 5.5 [Manual verification](#55-manual-verification)
+   - 5.6 [Capabilities, limitations, and recommendations](#56-capabilities-limitations-and-recommendations)
+6. [Malware — On-Device Threat Scanning](#6-malware--on-device-threat-scanning)
+   - 6.1 [Permissions (Android)](#61-permissions-android)
+   - 6.2 [Scanning the whole device](#62-scanning-the-whole-device)
+   - 6.3 [Analyzing a single app or APK file](#63-analyzing-a-single-app-or-apk-file)
+   - 6.4 [Result models](#64-result-models)
+   - 6.5 [API reference](#65-api-reference)
+7. [Exceptions](#7-exceptions)
 
 ---
 
@@ -193,6 +200,9 @@ final response = await client.post(
 |---|---|---|---|
 | `inner` | `http.Client?` | `http.Client()` | Inner HTTP client (pass a client with SSL pinning to combine both) |
 | `verifyResponses` | `bool` | `true` | Verify the response signature; set `false` if the server doesn't sign responses yet |
+| `signWhen` | `bool Function(http.BaseRequest)?` | `null` (sign all) | Sign only the requests this predicate accepts; others pass through unsigned and unverified |
+| `onNotReady` | `OnNotReady` | `failFast` | What to do when attestation isn't ready yet — see [4.4](#44-letting-the-interceptor-raise-trust) |
+| `requiredLevel` | `TrustLevel? Function(http.BaseRequest)?` | `null` | Minimum trust for sensitive endpoints — the interceptor calls `ensureTrust` before signing |
 
 ### 3.2 Automatic mode — CShieldDioInterceptor (Dio) - Recommended
 
@@ -219,6 +229,10 @@ final response = await dio.post('/api/v1/login', data: {'user': 'alice'});
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `verifyResponses` | `bool` | `true` | Verify the response signature; set `false` if the server doesn't sign responses |
+| `signWhen` | `bool Function(RequestOptions)?` | `null` (sign all) | Sign only the requests this predicate accepts; others pass through unsigned and unverified |
+| `dio` | `Dio?` | `null` | The same `Dio` this interceptor is added to — enables force-refresh + one retry on `401 CSHIELD_INVALID_ACCESS_TOKEN` |
+| `onNotReady` | `OnNotReady` | `failFast` | What to do when attestation isn't ready yet — see [4.4](#44-letting-the-interceptor-raise-trust) |
+| `requiredLevel` | `TrustLevel? Function(RequestOptions)?` | `null` | Minimum trust for sensitive endpoints — the interceptor calls `ensureTrust` before signing |
 
 > When `verifyResponses: true`, the interceptor temporarily forces `ResponseType.bytes` to read the raw bytes for verification, then decodes back to the original type before returning to the caller.
 
@@ -318,11 +332,166 @@ Payload the server signs:
 
 ---
 
-## 4. SSL — Certificate Pinning
+## 4. Attestation — Device Trust (L0–L5)
+
+Attestation lets the device **prove its own identity and integrity** using its secure hardware
+(Android: *Key Attestation* over TEE/StrongBox, plus *Play Integrity*). The C-Shield cloud verifies
+that proof and issues a short-lived **access token** that carries a **trust level**; your server
+verifies the token offline (JWKS) and enforces a minimum trust level per route.
+
+Enrollment starts automatically in the background right after `CShieldEmbedded.initialize()` — there
+is nothing to call to get started. The APIs below exist so the app can (a) know whether attestation
+is ready, and (b) **raise** its trust level before entering a sensitive flow.
+
+> **Android only today.** On iOS every call returns the "not available" value
+> (`CShieldState.unavailable` / `TrustLevel.unknown` / `EnsureTrustResult.unavailable`) instead of
+> throwing, so the same app code runs on both platforms.
+
+### 4.1 Trust levels and the cheap-by-default model
+
+| Level | Name | Meaning |
+|---|---|---|
+| `l0` | UNTRUSTED | Not trusted — failed/spoofed environment. Always blocked by the server. |
+| `l1` | WEAK | Weak (software key / emulator for DEV). |
+| `l2` | BASIC | Basic (one weak pillar). |
+| `l3` | PARTIAL | One **strong** pillar, the other unknown — e.g. TEE key but Play Integrity not run yet. |
+| `l4` | HARDWARE | Strong hardware + clean environment (TEE + Play Integrity passed). |
+| `l5` | STRONG | Strongest — StrongBox + strong Play Integrity. **Android only.** |
+| `unknown` | — | Not registered yet; ranks below every valid level. |
+
+**Cheap by default, expensive on demand.** Enrollment and ordinary token refresh run *Key
+Attestation only* (keep-trust), which costs **no Play Integrity quota** — so most real devices sit
+at **L3** without ever touching Google's quota. Play Integrity only runs when you ask for a higher
+level through [`ensureTrust`](#43-raising-trust--ensuretrust), when you ask for fresh proof, or when
+the 24h keep-trust window expires.
+
+> Setting `minTrustLevel: "L5"` on the server blocks **all iOS devices** — the Secure Enclave maps
+> to the "TEE" row and there is no StrongBox on iOS.
+
+### 4.2 Readiness — state, awaitReady, stateChanges
+
+`CShieldState` tells you deterministically whether a request can be signed right now:
+
+| State | When | Can send requests? |
+|---|---|---|
+| `initializing` | Background enroll/refresh in flight, no token yet | Not yet — follow your `onNotReady` policy |
+| `ready` | Token + hardware key present, trust L2–L5 | Yes |
+| `degraded` | Token + key present but trust L0/L1 | Yes — the **server** decides whether to accept |
+| `unavailable` | Permanent failure (blocked / unsupported / misconfigured) | No — **do not retry** |
+
+```dart
+// One-shot read:
+final state = await CShieldAttest.state();
+
+// Block a splash screen until enrollment finishes (or 8s elapse):
+if (await CShieldAttest.awaitReady(timeoutMs: 8000) == CShieldState.unavailable) {
+  // Permanent — show "device not supported" and read the stable reason code:
+  debugPrint('attest unavailable: ${await CShieldAttest.lastError()}');
+}
+
+// Or follow it live — the first event arrives immediately with the current state:
+final sub = CShieldAttest.stateChanges.listen((e) {
+  debugPrint('attest ${e.state.id} · trust=${e.trustLevel.id} · lastError=${e.lastError}');
+});
+await sub.cancel(); // in dispose()
+```
+
+`lastError()` returns the latest **stable** error code of the enroll/refresh flow — `device_blocked`,
+`attestation_not_enabled`, `device_unsupported`, `attestation_rejected`, `key_already_bound`,
+`transport_auth`, `network`, `rate_limited`, … When `state()` is `unavailable` this is the permanent
+reason; when `initializing` it is the transient reason currently being retried in the background.
+
+### 4.3 Raising trust — ensureTrust
+
+Call `ensureTrust` **before** a sensitive flow whose route requires L4+. Already satisfied → it
+returns immediately and costs nothing; short of the bar → it refreshes **with Play Integrity**
+(1 quota unit).
+
+```dart
+Future<void> onPayPressed() async {
+  final result = await CShieldAttest.ensureTrust(TrustLevel.l4);
+  switch (result) {
+    case EnsureTrustResult.satisfied:
+      await goPayment();
+    case EnsureTrustResult.insufficient:
+      block('This device does not meet the required security level');
+    case EnsureTrustResult.rateLimited:
+    case EnsureTrustResult.timeout:
+      retryLater(); // transient — current trust is NOT downgraded
+    case EnsureTrustResult.unavailable:
+      notSupported(); // permanent — do not retry
+  }
+}
+```
+
+For the most sensitive operations (routes that set `maxTrustAgeSeconds`), demand **fresh** proof —
+this always spends one Play Integrity unit:
+
+```dart
+await CShieldAttest.ensureTrust(TrustLevel.l4, requireFresh: true, timeoutMs: 20000);
+```
+
+> The client **raises** trust so it does not get rejected; the **server** is what decides. A client
+> can never forge a higher level, because the token is signed by the C-Shield cloud.
+
+### 4.4 Letting the interceptor raise trust
+
+Instead of calling `ensureTrust` by hand on every screen, map sensitive endpoints to the level they
+need and let the interceptor raise trust before signing (best effort — it never blocks the request
+on the client):
+
+```dart
+// Dio
+dio.interceptors.add(CShieldDioInterceptor(
+  dio: dio,
+  requiredLevel: (options) => switch (options.path) {
+    '/payment' || '/transfer' => TrustLevel.l4,
+    _ => null, // ordinary endpoints: no Play Integrity, no quota
+  },
+));
+
+// http
+final client = CShieldInterceptor(
+  requiredLevel: (request) => request.url.path == '/payment' ? TrustLevel.l4 : null,
+);
+```
+
+Both interceptors also accept `onNotReady`, which decides what happens when attestation is not
+ready yet at signing time:
+
+| Policy | Behavior |
+|---|---|
+| `OnNotReady.failFast` (default) | Throw `CShieldException(notReady)`, **do not send** the request (fail-closed) |
+| `OnNotReady.blockRetry` | Wait briefly, then try to sign once more (only when the error is `retryable`) |
+| `OnNotReady.passThrough` | Send the request **unsigned** — non-sensitive endpoints only |
+
+### 4.5 Server error codes → what the app should do
+
+| Server response | Meaning | What the app does |
+|---|---|---|
+| `403 CSHIELD_DEVICE_NOT_ALLOWED` | Trust below the route's `minTrustLevel` | `ensureTrust(level)` then retry |
+| `403 CSHIELD_TRUST_NOT_FRESH` | Trust high enough but the proof is too old | `ensureTrust(level, requireFresh: true)` then retry |
+| `401 CSHIELD_INVALID_ACCESS_TOKEN` | Token expired/rejected | Handled by the interceptors (force refresh + one retry) |
+
+### 4.6 API reference
+
+| API | Returns | Notes |
+|---|---|---|
+| `CShieldAttest.state()` | `CShieldState` | Current readiness |
+| `CShieldAttest.lastError()` | `String?` | Latest stable error code of enroll/refresh |
+| `CShieldAttest.awaitReady({timeoutMs = 8000})` | `CShieldState` | Waits for enrollment to settle |
+| `CShieldAttest.currentTrustLevel()` | `TrustLevel` | Read from the held access token — client routing only |
+| `CShieldAttest.ensureTrust(level, {requireFresh = false, timeoutMs = 15000})` | `EnsureTrustResult` | May spend Play Integrity quota |
+| `CShieldAttest.forceRefresh({timeoutMs = 5000})` | `bool` | Only needed with a hand-rolled HTTP client |
+| `CShieldAttest.stateChanges` | `Stream<AttestStateChanged>` | Emits the current state on subscribe |
+
+---
+
+## 5. SSL — Certificate Pinning
 
 Certificate pinning ensures the app only accepts the known, correct server certificate, preventing MITM even when the device trusts a rogue CA.
 
-### 4.1 Obtaining pin values
+### 5.1 Obtaining pin values
 
 A pin is the SHA-256 hash of the certificate's SPKI (Subject Public Key Info), base64-encoded:
 
@@ -356,7 +525,7 @@ openssl x509 -in intermediate.pem -pubkey -noout \
 
 > ⚠️ **Only the Dio path (`createDioAdapter`) matches the whole chain.** The `http` path and `verifyPin` only compare the leaf (see [4.6](#46-capabilities-limitations-and-recommendations)) — pinning the intermediate will **not** match on those two paths.
 
-### 4.2 Configuring CShieldSSL
+### 5.2 Configuring CShieldSSL
 
 Call `configure()` after `initialize()`, before making any network request:
 
@@ -384,7 +553,7 @@ await CShieldSSL.configure(
 | `createIOClient()` | Creates an `IOClient` (http package) — a drop-in for `http.Client()`. **Leaf-only, pure Dart** |
 | `verifyPin(certDerBase64, host)` | Manually verifies a single certificate DER, base64-encoded. **Checks only the leaf's SPKI** (Dart can only pass the leaf) |
 
-### 4.3 Integrating with the http package
+### 5.3 Integrating with the http package
 
 > ⚠️ **Not recommended for sensitive APIs.** The `http` path uses `badCertificateCallback`, which **only fires when the certificate fails default validation**. A MITM certificate chaining to a trusted CA (even a CA the victim installed themselves) will **pass without pin checking**. It also **only compares the leaf**, so intermediate pinning isn't possible. For sensitive data, use **Dio + `createDioAdapter()`** ([4.4](#44-integrating-with-dio)).
 
@@ -415,7 +584,7 @@ final client = CShieldInterceptor(
 // client now has both certificate pinning and automatic AIP signing/verification
 ```
 
-### 4.4 Integrating with Dio
+### 5.4 Integrating with Dio
 
 ```dart
 import 'package:c_shield_embedded/c_shield_embedded.dart';
@@ -441,7 +610,7 @@ dio.interceptors.add(const CShieldDioInterceptor());
 
 > **Buffered, not streaming.** Requests/responses are passed through native as a whole. Upload/download progress, `ResponseType.stream`, and SSE are not supported on a pinned host — see [4.6](#46-capabilities-limitations-and-recommendations).
 
-### 4.5 Manual verification
+### 5.5 Manual verification
 
 > ⚠️ `verifyPin()` **only checks the leaf certificate's SPKI** (Dart can only pass the leaf down to native) and does not perform full CA chain validation. Treat it as a secondary utility, not the primary pinning mechanism. The complete mechanism (full chain + CA validation) is `createDioAdapter()`.
 
@@ -464,7 +633,7 @@ if (!trusted) {
 }
 ```
 
-### 4.6 Capabilities, limitations, and recommendations
+### 5.6 Capabilities, limitations, and recommendations
 
 A fundamental Flutter constraint: `dart:io` **only exposes the leaf certificate** — there's no pure-Dart API to obtain the full chain. Because of this, the SDK **delegates transport to native** (OkHttp/URLSession) on the Dio path so pinning runs where the full chain is visible — this is considered the most reliable model available in Flutter.
 
@@ -502,7 +671,7 @@ A fundamental Flutter constraint: `dart:io` **only exposes the leaf certificate*
 
 ---
 
-## 5. Malware — On-Device Threat Scanning
+## 6. Malware — On-Device Threat Scanning
 
 The malware module scans the device for threats: it inspects installed apps (and, when storage permission is granted, files on disk) and classifies findings into categories such as virus, blacklist, accessibility abuse, suspicious, and untrusted.
 
@@ -519,7 +688,7 @@ if (Platform.isAndroid) {
 }
 ```
 
-### 5.1 Permissions (Android)
+### 6.1 Permissions (Android)
 
 Scanning **installed apps** requires no storage permission. Scanning **files** does — declare the storage permissions in `android/app/src/main/AndroidManifest.xml`:
 
@@ -537,7 +706,7 @@ Scanning **installed apps** requires no storage permission. Scanning **files** d
 
 When storage access is missing, `scanDevice()` still completes but only covers installed apps; the returned `DeviceScanResult.storagePermissionGranted` is `false` and `totalFiles` reflects the reduced coverage.
 
-### 5.2 Scanning the whole device
+### 6.2 Scanning the whole device
 
 `scanDevice()` runs a full scan and completes with a categorized `DeviceScanResult`. The scan runs natively and may take a while; call `stopScan()` to request cancellation (best-effort — the in-flight `scanDevice()` future still resolves on its own).
 
@@ -566,7 +735,7 @@ try {
 await CShieldMalware.stopScan();
 ```
 
-### 5.3 Analyzing a single app or APK file
+### 6.3 Analyzing a single app or APK file
 
 Instead of a full scan, analyze one target and get a single `ScannedPackage`:
 
@@ -582,7 +751,7 @@ print('${apk.packageName} — trust: ${apk.trustType}, source: ${apk.source}');
 
 Both throw `CShieldException(invalidArgument)` if the path/package name is missing, and `CShieldException(nativeError)` on a native failure.
 
-### 5.4 Result models
+### 6.4 Result models
 
 **`DeviceScanResult`:**
 
@@ -614,7 +783,7 @@ Both throw `CShieldException(invalidArgument)` if the path/package name is missi
 | `publisher` | `String?` | Publisher, if known |
 | `payload` | `String?` | Extra native payload data |
 
-### 5.5 API reference
+### 6.5 API reference
 
 | Method | Platform | Description |
 |---|---|---|
@@ -625,7 +794,7 @@ Both throw `CShieldException(invalidArgument)` if the path/package name is missi
 
 ---
 
-## 6. Exceptions
+## 7. Exceptions
 
 All errors from the SDK are thrown as `CShieldException`:
 
@@ -634,6 +803,8 @@ class CShieldException implements Exception {
   final CShieldErrorCode code;    // error code enum
   final String message;           // error description
   final Object? nativeCause;      // underlying native error, if any
+  final bool? retryable;          // notReady only: wait and retry (true) vs. permanent (false)
+  final String? state;            // notReady only: INITIALIZING / READY / DEGRADED / UNAVAILABLE
 }
 ```
 
@@ -649,6 +820,7 @@ class CShieldException implements Exception {
 | `sslNotConfigured` | `createHttpClient()`/`createIOClient()`/`createDioAdapter()` was called before `CShieldSSL.configure()` |
 | `sslPinMismatch` | The server's certificate doesn't match the configured pin |
 | `notInitialized` | An API was called before `CShieldEmbedded.initialize()` |
+| `notReady` | Attestation isn't ready to sign yet (no hardware key/token). Read `retryable`: `true` → wait (`CShieldAttest.awaitReady`) and retry; `false` → permanent, do not retry, and read `message` for the stable reason code (`device_blocked`, `device_unsupported`, …) |
 | `invalidArgument` | An invalid argument was provided |
 | `nativeError` | An unspecified error from the native SDK |
 
@@ -692,5 +864,9 @@ Initialize the HTTP client (singleton)
   +-- CShieldInterceptor(inner: CShieldSSL.createIOClient())   // http package
       // or Dio:
   +-- dio.httpClientAdapter = CShieldSSL.createDioAdapter()
-  +-- dio.interceptors.add(CShieldDioInterceptor())
+  +-- dio.interceptors.add(CShieldDioInterceptor(dio: dio))
+
+Before a sensitive flow (payment/transfer)
+  +-- CShieldAttest.ensureTrust(TrustLevel.l4)                  // raises trust on demand
+  +-- CShieldAttest.ensureTrust(TrustLevel.l4, requireFresh: true)  // extra-sensitive operations
 ```

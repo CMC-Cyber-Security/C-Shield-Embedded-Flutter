@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:c_shield_embedded/c_shield_embedded.dart';
@@ -82,6 +84,10 @@ class _OtpPageState extends State<OtpPage> {
   String _result = '';
   bool? _success;
 
+  // Trạng thái attestation hiện tại (native đẩy lên qua stream, phát ngay state đầu tiên).
+  AttestStateChanged? _attest;
+  StreamSubscription<AttestStateChanged>? _attestSub;
+
   @override
   initState() {
     try {
@@ -93,14 +99,67 @@ class _OtpPageState extends State<OtpPage> {
       });
     }
 
+    // Enroll chạy nền sau initialize → UI phản ánh INITIALIZING → READY/DEGRADED/UNAVAILABLE.
+    _attestSub = CShieldAttest.stateChanges.listen((e) {
+      if (mounted) setState(() => _attest = e);
+    });
+
     super.initState();
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _attestSub?.cancel();
     _dio?.close();
     super.dispose();
+  }
+
+  /// Luồng chuẩn cho endpoint nhạy: `ensureTrust(L4[, fresh])` TRƯỚC khi gọi API → đủ thì gọi,
+  /// không đủ thì dừng ở client (server mới là chốt, nhưng client chủ động để khỏi tốn round-trip).
+  Future<void> _runSensitive({required String path, required bool requireFresh}) async {
+    setState(() {
+      _loading = true;
+      _result = '';
+      _success = null;
+    });
+    try {
+      final before = await CShieldAttest.currentTrustLevel();
+      final ensured = await CShieldAttest.ensureTrust(TrustLevel.l4, requireFresh: requireFresh, timeoutMs: 20000);
+      final after = await CShieldAttest.currentTrustLevel();
+      final head = 'trust: ${before.id} → ${after.id} | '
+          'ensureTrust(L4${requireFresh ? ', fresh' : ''})=${ensured.name}';
+
+      if (ensured != EnsureTrustResult.satisfied) {
+        setState(() {
+          _success = false;
+          _result = '$head\n$path: dừng ở client (chưa đạt trust yêu cầu)';
+        });
+        return;
+      }
+
+      final response = await _dio?.post(path);
+      final data = (response?.data as Map).cast<String, dynamic>();
+      setState(() {
+        _success = data['code'] == 'OK';
+        _result = '$head\n$path → ${data['code']}: ${data['message']}';
+      });
+    } on CShieldException catch (e) {
+      setState(() {
+        _success = false;
+        _result = '$path lỗi: [${e.code.name}] ${e.message}';
+      });
+    } on DioException catch (e) {
+      final inner = e.error;
+      setState(() {
+        _success = false;
+        _result = inner is CShieldException
+            ? '$path lỗi: [${inner.code.name}] ${inner.message}'
+            : '$path lỗi: ${e.response?.statusCode ?? ''} ${e.message ?? e}';
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<void> _submit() async {
@@ -181,7 +240,9 @@ class _OtpPageState extends State<OtpPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 32),
+            const SizedBox(height: 24),
+            AttestBanner(event: _attest),
+            const SizedBox(height: 16),
             TextField(
               controller: _controller,
               enabled: !_loading,
@@ -194,6 +255,19 @@ class _OtpPageState extends State<OtpPage> {
                   ? const SizedBox(
                       height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Text('Verify OTP'),
+            ),
+            const SizedBox(height: 24),
+            // Route nhạy của demo server: /payment đòi L4; /transfer đòi L4 + attestation TƯƠI
+            // (maxTrustAgeSeconds) → requireFresh=true. Cả hai đều tốn 1 lượt Play Integrity khi
+            // phải nâng từ L3.
+            OutlinedButton(
+              onPressed: _loading ? null : () => _runSensitive(path: '/payment', requireFresh: false),
+              child: const Text('Payment (ensureTrust L4)'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: _loading ? null : () => _runSensitive(path: '/transfer', requireFresh: true),
+              child: const Text('Transfer (ensureTrust L4 + fresh)'),
             ),
             if (_result.isNotEmpty) ...[
               const SizedBox(height: 24),
@@ -230,6 +304,52 @@ class ResultCard extends StatelessWidget {
             child: Text(
               message,
               style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 15),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Hiển thị trạng thái attestation + trust level hiện tại (nguồn: [CShieldAttest.stateChanges]).
+/// `UNAVAILABLE` là lỗi VĨNH VIỄN — app thật nên thông báo "thiết bị không hỗ trợ" và đừng retry;
+/// `lastError` là mã lỗi ổn định (vd `device_blocked`, `attestation_not_enabled`).
+class AttestBanner extends StatelessWidget {
+  final AttestStateChanged? event;
+
+  const AttestBanner({super.key, this.event});
+
+  @override
+  Widget build(BuildContext context) {
+    final e = event;
+    final (color, label) = switch (e?.state) {
+      null => (Colors.grey, 'attest: …'),
+      CShieldState.initializing => (Colors.orange, 'attest: INITIALIZING (đang enroll nền)'),
+      CShieldState.ready => (Colors.green, 'attest: READY'),
+      CShieldState.degraded => (Colors.orange, 'attest: DEGRADED (trust thấp)'),
+      CShieldState.unavailable => (Colors.red, 'attest: UNAVAILABLE (đừng retry)'),
+    };
+    final detail = [
+      if (e != null) 'trust=${e.trustLevel.id}',
+      if (e?.lastError != null) 'lastError=${e!.lastError}',
+    ].join(' · ');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.verified_user_outlined, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              detail.isEmpty ? label : '$label · $detail',
+              style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 13),
             ),
           ),
         ],

@@ -31,6 +31,11 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             sslBridge.handle(call: call, result: result)
         case let m where m.hasPrefix("aip."):
             aipBridge.handle(call: call, result: result)
+        // `attest.*` (state/awaitReady/currentTrustLevel/ensureTrust) CHƯA có trên iOS: embedded
+        // iOS vẫn dùng App Attest + NativeRsa signer, chưa có attest v2 (register/refresh + trust
+        // level L0–L5) như Android. Rơi xuống FlutterMethodNotImplemented → Dart (CShieldAttest)
+        // dịch thành unavailable/unknown, nên app dùng chung một luồng cho cả hai nền tảng.
+        // Khi iOS embedded có attest v2 → thêm AttestBridge mirror AttestBridge.kt tại đây.
         default:
             result(FlutterMethodNotImplemented)
         }

@@ -3,7 +3,11 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../../internal/aip/aip_normalizer.dart';
+import '../attest/c_shield_attest.dart';
+import '../attest/trust_level.dart';
+import '../exceptions/c_shield_exception.dart';
 import 'c_shield_aip.dart';
+import 'on_not_ready.dart';
 
 /// An [http.BaseClient] that automatically signs every outgoing request
 /// and verifies every incoming response using CShield AIP.
@@ -25,6 +29,13 @@ import 'c_shield_aip.dart';
 /// ```
 ///
 /// Set [verifyResponses] to `false` if the server does not sign responses.
+///
+/// Endpoint nhạy cần trust cao thì gắn [requiredLevel] — interceptor tự `ensureTrust` trước khi ký:
+/// ```dart
+/// final client = CShieldInterceptor(
+///   requiredLevel: (r) => r.url.path == '/payment' ? TrustLevel.l4 : null,
+/// );
+/// ```
 class CShieldInterceptor extends http.BaseClient {
   final http.Client _inner;
   final bool verifyResponses;
@@ -33,8 +44,27 @@ class CShieldInterceptor extends http.BaseClient {
   /// KHÔNG ký + KHÔNG verify response (ký chọn lọc vài API).
   final bool Function(http.BaseRequest request)? signWhen;
 
-  CShieldInterceptor({http.Client? inner, this.verifyResponses = true, this.signWhen})
-      : _inner = inner ?? http.Client();
+  /// Chính sách khi attestation chưa sẵn sàng. Mặc định [OnNotReady.failFast] (fail-closed).
+  final OnNotReady onNotReady;
+
+  /// Gắn mức trust tối thiểu cho endpoint nhạy (vd ≥L4): trả mức cần cho request đó, else `null`.
+  /// Trước khi ký, interceptor CHỦ ĐỘNG gọi [CShieldAttest.ensureTrust] để nâng (Play Integrity)
+  /// nếu thiếu — best-effort, KHÔNG chặn ở client (server mới là nơi chốt trust). Mặc định `null`.
+  final TrustLevel? Function(http.BaseRequest request)? requiredLevel;
+
+  CShieldInterceptor({
+    http.Client? inner,
+    this.verifyResponses = true,
+    this.signWhen,
+    this.onNotReady = OnNotReady.failFast,
+    this.requiredLevel,
+  }) : _inner = inner ?? http.Client();
+
+  /// Chờ ngắn khi [OnNotReady.blockRetry] — không treo UI lâu.
+  static const _blockRetryWaitMs = 2000;
+
+  /// `ensureTrust` có thể phải chạy Play Integrity (prepare + request) → cho thời gian rộng hơn.
+  static const _ensureTrustTimeoutMs = 15000;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
@@ -42,8 +72,29 @@ class CShieldInterceptor extends http.BaseClient {
       return _inner.send(request); // không thuộc diện ký → forward nguyên bản
     }
 
+    // Endpoint nhạy được gắn mức: chủ động nâng trust TRƯỚC khi ký (best-effort). KHÔNG chặn theo
+    // kết quả — server mới chốt trust; nâng không đạt thì request vẫn gửi và server tự từ chối với
+    // tín hiệu phù hợp (CSHIELD_DEVICE_NOT_ALLOWED / CSHIELD_TRUST_NOT_FRESH).
+    await _ensureTrustBestEffort(requiredLevel?.call(request));
+
     final (body, contentType) = _bodyAndContentType(request);
-    final attempt = await _signProceedVerify(request, body, contentType, isRetry: false);
+    final _Attempt attempt;
+    try {
+      attempt = await _signProceedVerify(request, body, contentType, isRetry: false);
+    } on CShieldException catch (e) {
+      if (e.code != CShieldErrorCode.notReady) rethrow;
+      switch (onNotReady) {
+        case OnNotReady.failFast:
+          rethrow;
+        case OnNotReady.passThrough:
+          return _inner.send(request); // KHÔNG ký
+        case OnNotReady.blockRetry:
+          if (e.retryable == false) rethrow;
+          await CShieldAttest.awaitReady(timeoutMs: _blockRetryWaitMs);
+          // Thử lại ĐÚNG 1 lần (request chưa hề được gửi — sign ném trước khi đi dây).
+          return (await _signProceedVerify(request, body, contentType, isRetry: true)).response;
+      }
+    }
 
     // Server từ chối access token (401 invalid-token) → force refresh + thử lại ĐÚNG 1 lần với
     // token mới. Chỉ clone lại được http.Request (JSON); loại khác (multipart) → trả nguyên 401.
@@ -112,6 +163,17 @@ class CShieldInterceptor extends http.BaseClient {
       return c;
     }
     return null;
+  }
+
+  /// Nâng trust trước khi ký — BEST-EFFORT: lỗi native (vd attest chưa khả dụng) KHÔNG được chặn
+  /// request, vì server mới là nơi chốt trust và sẽ trả tín hiệu phù hợp.
+  static Future<void> _ensureTrustBestEffort(TrustLevel? level) async {
+    if (level == null || level == TrustLevel.unknown) return;
+    try {
+      await CShieldAttest.ensureTrust(level, timeoutMs: _ensureTrustTimeoutMs);
+    } on CShieldException catch (_) {
+      // bỏ qua — vẫn gửi request với trust hiện có
+    }
   }
 
   @override
