@@ -21,6 +21,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Initialize CShieldSdk.
   await CShieldEmbedded.initialize(
+      cloudProjectNumber: '970898117522',
       license:
           'eyJraWQiOiJmOTE1NTUzOC02MzA4LTQ4MjctOTRiMy02NTA1ZGQ1YTZiZWUiLCJhbGciOiJSUzI1NiJ9.eyJqdGkiOiJmOTE1NTUzOC02MzA4LTQ4MjctOTRiMy02NTA1ZGQ1YTZiZWUiLCJpc3MiOiJwcm9tb24tbGljZW5zZSIsInN1YiI6IkNNQ0NTIiwiaWF0IjoxNzkwOTMyOTE4LCJuYmYiOjE3OTA4OTkyMDAsImV4cCI6NDEzMzk4MDc5OSwiYXBwbGljYXRpb25JZCI6ImNzaGllbGQtZW1iZWRkZWQtc2FtcGxlIiwicGFja2FnZUlkIjoiY29tLmNtYy5leGFtcGxlLmNzaGllbGRlbWJlZGRlZCIsImJ1bmRsZUlkIjoiY29tLmNtYy5leGFtcGxlLmNzaGllbGRlbWJlZGRlZCIsIm1vZHVsZXMiOlsiU0hJRUxEIl0sInBsYXRmb3JtcyI6WyJBTkRST0lEIiwiSU9TIl0sImVudmlyb25tZW50cyI6WyJQUk9EIiwiU1RBR0lORyIsIkRFViJdLCJvZmZsaW5lR3JhY2VEYXlzIjowfQ.FE-CTqKnXYnHoCH9YV9xdvM0ImggoqFbNEAHBvJk3HeWWbAs80BfQmnHHUdJnutZM1km_Sk2NX5Nv8SF-1NlAyCGv-ftYwBFq2DloraaiUR4v3JImPxf8h6xJS_Gfn_nbSikYt4GsvqDKsgp9zEFeMwZijC3RAGMdGXLzPF17judO4OucVV6DREv-UXlbhFTGnQTBCac0nR9eS94Sq7SVPA8csuRguc7Y1vxz_zH1q7GQyt91aYlEZ1AUOA-8n8BZt3PHO7WRZ2R53F3XQR30Oc-wxgeDPgYHV0vKC2SGTr6dpQtIoBM_bAWZyVtI-SQiMkqO7P_cwgURMAYFYsWZQ');
   try {
@@ -153,9 +154,7 @@ class _OtpPageState extends State<OtpPage> {
       final inner = e.error;
       setState(() {
         _success = false;
-        _result = inner is CShieldException
-            ? '$path lỗi: [${inner.code.name}] ${inner.message}'
-            : '$path lỗi: ${e.response?.statusCode ?? ''} ${e.message ?? e}';
+        _result = inner is CShieldException ? '$path lỗi: [${inner.code.name}] ${inner.message}' : '$path lỗi: ${e.response?.statusCode ?? ''} ${e.message ?? e}';
       });
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -251,10 +250,7 @@ class _OtpPageState extends State<OtpPage> {
             const SizedBox(height: 16),
             FilledButton(
               onPressed: _loading ? null : _submit,
-              child: _loading
-                  ? const SizedBox(
-                      height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('Verify OTP'),
+              child: _loading ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Verify OTP'),
             ),
             const SizedBox(height: 24),
             // Route nhạy của demo server: /payment đòi L4; /transfer đòi L4 + attestation TƯƠI
@@ -269,10 +265,7 @@ class _OtpPageState extends State<OtpPage> {
               onPressed: _loading ? null : () => _runSensitive(path: '/transfer', requireFresh: true),
               child: const Text('Transfer (ensureTrust L4 + fresh)'),
             ),
-            if (_result.isNotEmpty) ...[
-              const SizedBox(height: 24),
-              ResultCard(message: _result, success: _success == true)
-            ],
+            if (_result.isNotEmpty) ...[const SizedBox(height: 24), ResultCard(message: _result, success: _success == true)],
           ],
         ),
       ),

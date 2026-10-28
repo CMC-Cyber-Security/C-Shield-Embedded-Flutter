@@ -18,7 +18,7 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   }
 
   @override
-  Future<void> initialize({required String license}) {
+  Future<void> initialize({required String license, required String cloudProjectNumber}) {
     // TODO: implement initialize
     throw UnimplementedError();
   }
@@ -62,12 +62,7 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   }
 
   @override
-  Future<Map<Object, Object>> aipSignRequest(
-      {required String method,
-      required String path,
-      required String canonicalQuery,
-      required int timestampSec,
-      required String bodyHashHex}) {
+  Future<Map<Object, Object>> aipSignRequest({required String method, required String path, required String canonicalQuery, required int timestampSec, required String bodyHashHex}) {
     // TODO: implement aipSignRequest
     throw UnimplementedError();
   }

@@ -56,7 +56,8 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
   // ── Initialization ──────────────────────────────────────────────────────────────────
 
   @override
-  Future<void> initialize({required String license}) => _invoke(CShieldChannels.sdkInitialize, {'license': license});
+  Future<void> initialize({required String license, required String cloudProjectNumber}) =>
+      _invoke(CShieldChannels.sdkInitialize, {'license': license, 'cloudProjectNumber': cloudProjectNumber});
 
   @override
   Stream<CShieldEvent> get events => _events ??= eventChannel

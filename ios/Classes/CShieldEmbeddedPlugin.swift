@@ -24,6 +24,7 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         case "sdk.initialize":
             let args = call.arguments as? [String: Any] ?? [:]
             guard let license = args["license"] as? String else { result(invalidArg()); return }
+            // `cloudProjectNumber` chỉ dành cho Play Integrity (Android) — iOS (App Attest) BỎ QUA.
             CShield.initialize(license: license)
             CShield.setLicenseCallback(self)
             result(nil)

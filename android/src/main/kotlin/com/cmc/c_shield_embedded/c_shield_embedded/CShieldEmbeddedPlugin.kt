@@ -65,7 +65,14 @@ class CShieldEmbeddedPlugin :
             call.method == "sdk.initialize" -> {
                 val license = call.argument<String>("license")
                     ?: return result.error(CShieldErrorCode.INVALID_ARGUMENT, "c-shield license required", null)
-                CShieldSDK.initialize(context, license)
+                val cloudProjectNumber = call.argument<String>("cloudProjectNumber")
+                    ?: return result.error(CShieldErrorCode.INVALID_ARGUMENT, "cloudProjectNumber required", null)
+                try {
+                    CShieldSDK.initialize(context, license, cloudProjectNumber)
+                } catch (e: IllegalArgumentException) {
+                    // cloudProjectNumber rỗng/không phải số nguyên dương → fail-fast rõ ràng.
+                    return result.error(CShieldErrorCode.INVALID_ARGUMENT, e.message, null)
+                }
                 CShieldSDK.setLicenseCallback(object : LicenseCallback {
                     override fun onLicenseRenewed(newJwt: String) {
                         eventSink?.success(mapOf(
