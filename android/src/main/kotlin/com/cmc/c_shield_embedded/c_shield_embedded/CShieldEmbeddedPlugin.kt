@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AipBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiMalwareBridge
+import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiKeyloggerBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiOverlayBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.BehavioralTouchGuardBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.SslBridge
@@ -37,6 +38,7 @@ class CShieldEmbeddedPlugin :
     private lateinit var malwareBridge: AntiMalwareBridge
     private lateinit var antiOverlayBridge: AntiOverlayBridge
     private lateinit var btgBridge: BehavioralTouchGuardBridge
+    private lateinit var antiKeyloggerBridge: AntiKeyloggerBridge
 
     // Set/cleared by the ActivityAware callbacks; the anti-overlay guard needs the
     // host Activity to wrap its window callback.
@@ -52,6 +54,9 @@ class CShieldEmbeddedPlugin :
         malwareBridge = AntiMalwareBridge(context)
         antiOverlayBridge = AntiOverlayBridge({ activity }, { eventSink })
         btgBridge = BehavioralTouchGuardBridge({ activity }, { eventSink })
+        antiKeyloggerBridge = AntiKeyloggerBridge { eventSink }
+        // Route the auto-started guard's detections to the Dart event channel.
+        antiKeyloggerBridge.wireDetection()
 
         channel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
@@ -87,6 +92,7 @@ class CShieldEmbeddedPlugin :
             call.method.startsWith("malware.") -> malwareBridge.handle(call, result)
             call.method.startsWith("antiOverlay.") -> antiOverlayBridge.handle(call, result)
             call.method.startsWith("btg.") -> btgBridge.handle(call, result)
+            call.method.startsWith("antiKeylogger.") -> antiKeyloggerBridge.handle(call, result)
             else -> result.notImplemented()
         }
     }

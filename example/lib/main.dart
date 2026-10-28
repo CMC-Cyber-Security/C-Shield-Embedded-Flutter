@@ -78,6 +78,9 @@ class _OtpPageState extends State<OtpPage> {
 
   StreamSubscription<CShieldEvent>? _btgSub;
   String? _btgStatus;
+  // Anti-Keylogger: detections arrive on the shared events stream.
+  StreamSubscription<CShieldEvent>? _akSub;
+  String? _akWarning;
 
   @override
   initState() {
@@ -102,6 +105,21 @@ class _OtpPageState extends State<OtpPage> {
         setState(() => _btgStatus = null);
       }
     });
+    // Listen for untrusted-keyboard / suspicious-accessibility detections.
+    _akSub = CShieldEmbedded.events.listen((event) {
+      switch (event) {
+        case ThirdPartyKeyboardDetected(:final label, :final packageName):
+          setState(() => _akWarning =
+              'Untrusted keyboard: ${label.isNotEmpty ? label : packageName}');
+        case SuspiciousAccessibilityServiceDetected(:final packageNames):
+          setState(() =>
+              _akWarning = 'Suspicious accessibility service: ${packageNames.join(', ')}');
+        default:
+          break; // license events, etc.
+      }
+    });
+    // The guard doesn't auto-check at startup — pull the current posture now.
+    CShieldAntiKeylogger.runCheck();
 
     super.initState();
   }
@@ -110,6 +128,7 @@ class _OtpPageState extends State<OtpPage> {
   void dispose() {
     _btgSub?.cancel();
     CShieldBehavioralTouchGuard.unprotect();
+    _akSub?.cancel();
     _controller.dispose();
     _dio?.close();
     super.dispose();
@@ -180,6 +199,11 @@ class _OtpPageState extends State<OtpPage> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
           IconButton(
+            icon: const Icon(Icons.keyboard),
+            tooltip: 'Re-check keyboard (Anti-Keylogger)',
+            onPressed: () => CShieldAntiKeylogger.runCheck(),
+          ),
+          IconButton(
             icon: const Icon(Icons.security),
             tooltip: 'Anti-Malware Scan',
             onPressed: () => Navigator.of(context).push(
@@ -215,6 +239,13 @@ class _OtpPageState extends State<OtpPage> {
                   ],
                 ),
               ),
+            if (_akWarning != null) ...[
+              const SizedBox(height: 16),
+              _AntiKeyloggerBanner(
+                message: _akWarning!,
+                onDismiss: () => setState(() => _akWarning = null),
+              ),
+            ],
             const SizedBox(height: 32),
             TextField(
               controller: _controller,
@@ -235,6 +266,42 @@ class _OtpPageState extends State<OtpPage> {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _AntiKeyloggerBanner extends StatelessWidget {
+  final String message;
+  final VoidCallback onDismiss;
+
+  const _AntiKeyloggerBanner({required this.message, required this.onDismiss});
+
+  @override
+  Widget build(BuildContext context) {
+    const color = Colors.orange;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFE65100)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: Color(0xFFE65100), fontWeight: FontWeight.w600),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            onPressed: onDismiss,
+          ),
+        ],
       ),
     );
   }

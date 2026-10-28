@@ -149,4 +149,20 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
 
   @override
   Future<void> btgUnprotect() => _invoke(CShieldChannels.btgUnprotect);
+  // ── Anti Keylogger ──────────────────────────────────────────────────────────
+
+  @override
+  Future<void> antiKeyloggerConfigure({
+    bool trustSystemKeyboards = true,
+    List<String> trustedKeyboardPackages = const [],
+    List<String> trustedAccessibilityPackages = const [],
+  }) =>
+      _invoke(CShieldChannels.antiKeyloggerConfigure, {
+        'trustSystemKeyboards': trustSystemKeyboards,
+        'trustedKeyboardPackages': trustedKeyboardPackages,
+        'trustedAccessibilityPackages': trustedAccessibilityPackages,
+      });
+
+  @override
+  Future<void> antiKeyloggerRunCheck() => _invoke(CShieldChannels.antiKeyloggerRunCheck);
 }

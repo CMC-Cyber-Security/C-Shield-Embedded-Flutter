@@ -104,4 +104,17 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
       throw UnimplementedError();
 
   Future<void> btgUnprotect() => throw UnimplementedError();
+  // ── Anti Keylogger (Android only) ───────────────────────────────────────────
+  // Auto-started by [initialize]; detections arrive over [events] as
+  // ThirdPartyKeyboardDetected / SuspiciousAccessibilityServiceDetected.
+  // [antiKeyloggerConfigure] sets the trust allowlists (empty keyboard list keeps
+  // the native default); [antiKeyloggerRunCheck] re-evaluates the current posture.
+  Future<void> antiKeyloggerConfigure({
+    bool trustSystemKeyboards = true,
+    List<String> trustedKeyboardPackages = const [],
+    List<String> trustedAccessibilityPackages = const [],
+  }) =>
+      throw UnimplementedError();
+
+  Future<void> antiKeyloggerRunCheck() => throw UnimplementedError();
 }
