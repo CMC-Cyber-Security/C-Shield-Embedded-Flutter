@@ -10,3 +10,4 @@ export 'src/api/malware/c_shield_malware.dart';
 export 'src/api/malware/models.dart';
 export 'src/api/antioverlay/c_shield_anti_overlay.dart';
 export 'src/api/btg/c_shield_behavioral_touch_guard.dart';
+export 'src/api/antikeylogger/c_shield_anti_keylogger.dart';

@@ -7,6 +7,8 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
 
     private let sslBridge = SslBridge()
     private let aipBridge = AipBridge()
+    // Forwards native anti-keylogger detections to Dart; reads `eventSink` lazily.
+    private lazy var antiKeyloggerBridge = AntiKeyloggerBridge(eventSink: { [weak self] in self?.eventSink })
 
     // Streams native license lifecycle callbacks to Dart over the "c_shield_embedded_event" EventChannel.
     private var eventSink: FlutterEventSink?
@@ -24,6 +26,9 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         case "sdk.initialize":
             let args = call.arguments as? [String: Any] ?? [:]
             guard let license = args["license"] as? String else { result(invalidArg()); return }
+            // Wire the anti-keylogger detection before init so a keyboard loaded at
+            // launch is routed to Dart rather than the SDK's default warning.
+            antiKeyloggerBridge.wireDetection()
             CShield.initialize(license: license)
             CShield.setLicenseCallback(self)
             result(nil)
@@ -31,6 +36,8 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             sslBridge.handle(call: call, result: result)
         case let m where m.hasPrefix("aip."):
             aipBridge.handle(call: call, result: result)
+        case let m where m.hasPrefix("antiKeylogger."):
+            antiKeyloggerBridge.handle(call: call, result: result)
         default:
             result(FlutterMethodNotImplemented)
         }

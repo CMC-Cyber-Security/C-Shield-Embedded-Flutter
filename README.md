@@ -39,7 +39,11 @@ The SDK wraps native AAR (Android) and XCFramework (iOS) libraries, so the signi
    - 7.1 [Protecting a sensitive screen](#71-protecting-a-sensitive-screen)
    - 7.2 [Reacting to touch-guard events](#72-reacting-to-touch-guard-events)
    - 7.3 [API reference](#73-api-reference)
-8. [Exceptions](#8-exceptions)
+8. [Anti-Keylogger](#8-anti-keylogger)
+   - 8.1 [Reacting to detections](#81-reacting-to-detections)
+   - 8.2 [Allowlists (Android)](#82-allowlists-android)
+   - 8.3 [API reference](#83-api-reference)
+9. [Exceptions](#9-exceptions)
 
 ---
 
@@ -821,7 +825,59 @@ Events (via `CShieldEmbedded.events`): `SuspiciousTouchDetected(riskScore, reaso
 
 ---
 
-## 8. Exceptions
+## 8. Anti-Keylogger
+
+Detects the two keystroke-capture vectors a mobile app can observe:
+
+1. **Third-party / untrusted keyboard (IME)** set as the active input method — it can read everything the user types.
+2. **Untrusted accessibility services** that can read text fields (Android only).
+
+The guard is **auto-started** by `CShieldEmbedded.initialize(...)`; there is nothing to call to turn it on. Detections arrive on the shared `CShieldEmbedded.events` stream.
+
+> ⚠️ **Platform differences.** Both platforms emit `ThirdPartyKeyboardDetected`. The name says *Detected*, not *Blocked*: unlike iOS (which can refuse a third-party keyboard extension), Android cannot block the system keyboard the user chose — it only reports. **Android-only:** `SuspiciousAccessibilityServiceDetected`, and `configure()` / `runCheck()` (on iOS these resolve as no-ops — there is no keyboard allowlist and detection is automatic). iOS also does not expose the keyboard's identity, so `inputMethodId` / `packageName` arrive empty.
+
+### 8.1 Reacting to detections
+
+```dart
+_sub = CShieldEmbedded.events.listen((event) {
+  switch (event) {
+    case ThirdPartyKeyboardDetected(:final label):
+      _warnUser('Untrusted keyboard active: $label');
+    case SuspiciousAccessibilityServiceDetected(:final packageNames):
+      _warnUser('Suspicious accessibility service: $packageNames');
+    default:
+      break; // overlay / license events, etc.
+  }
+});
+```
+
+> Subscribe **after** `initialize()`. The initial posture is not auto-checked — call `CShieldAntiKeylogger.runCheck()` once after subscribing to catch a threat already present at startup (the guard still fires automatically when the keyboard / accessibility services change afterwards).
+
+### 8.2 Allowlists (Android)
+
+By default a keyboard is trusted if it is a system app or a well-known third-party keyboard (Gboard / Samsung / SwiftKey). Tune it, then re-evaluate:
+
+```dart
+await CShieldAntiKeylogger.configure(
+  trustSystemKeyboards: true,
+  trustedKeyboardPackages: ['com.company.internal_keyboard'], // empty keeps the native default
+  trustedAccessibilityPackages: ['com.company.internal_a11y'],
+);
+await CShieldAntiKeylogger.runCheck();
+```
+
+### 8.3 API reference
+
+| Method | Platform | Description |
+|---|---|---|
+| `configure({trustSystemKeyboards, trustedKeyboardPackages, trustedAccessibilityPackages})` | Android (no-op iOS) | Sets the trust allowlists. Empty keyboard list keeps the native default |
+| `runCheck()` | Android (no-op iOS) | Re-evaluates the current keyboard / accessibility posture now |
+
+Events (via `CShieldEmbedded.events`): `ThirdPartyKeyboardDetected(inputMethodId, packageName, label)`, `SuspiciousAccessibilityServiceDetected(packageNames)` (Android only).
+
+---
+
+## 9. Exceptions
 
 All errors from the SDK are thrown as `CShieldException`:
 

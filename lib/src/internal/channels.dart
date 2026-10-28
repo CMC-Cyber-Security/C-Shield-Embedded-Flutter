@@ -42,4 +42,11 @@ class CShieldChannels {
   // [eventChannel] as SuspiciousTouchDetected / TouchGuardCleared. Android-only.
   static const String btgProtect = 'btg.protect';
   static const String btgUnprotect = 'btg.unprotect';
+  // Anti-keylogger runtime guard. Auto-started inside [sdkInitialize]; detections
+  // (untrusted keyboard / accessibility service) arrive over [eventChannel] as
+  // onThirdPartyKeyboardDetected / onSuspiciousAccessibilityServiceDetected.
+  // configure() sets the trust allowlists; runCheck() re-evaluates on demand.
+  // Android-only.
+  static const String antiKeyloggerConfigure = 'antiKeylogger.configure';
+  static const String antiKeyloggerRunCheck = 'antiKeylogger.runCheck';
 }

@@ -23,6 +23,16 @@ sealed class CShieldEvent {
         );
       case 'onTouchGuardCleared':
         return const TouchGuardCleared();
+      case 'onThirdPartyKeyboardDetected':
+        return ThirdPartyKeyboardDetected(
+          inputMethodId: map['inputMethodId'] as String? ?? '',
+          packageName: map['packageName'] as String? ?? '',
+          label: map['label'] as String? ?? '',
+        );
+      case 'onSuspiciousAccessibilityServiceDetected':
+        return SuspiciousAccessibilityServiceDetected(
+          packageNames: (map['packageNames'] as List?)?.cast<String>() ?? const <String>[],
+        );
       default:
         throw ArgumentError('Unknown event: $event');
     }
@@ -74,4 +84,36 @@ class SuspiciousTouchDetected extends CShieldEvent {
 /// [SuspiciousTouchDetected].
 class TouchGuardCleared extends CShieldEvent {
   const TouchGuardCleared();
+}
+/// The device's active keyboard (IME) is neither a system keyboard nor on the
+/// trusted allowlist — a third-party IME can read everything the user types.
+///
+/// Named *Detected*, not *Blocked* (cf. iOS, which can refuse a keyboard
+/// extension): Android cannot block the system keyboard the user chose, so the
+/// guard only reports. See [CShieldAntiKeylogger].
+class ThirdPartyKeyboardDetected extends CShieldEvent {
+  /// Raw IME component id (`pkg/.ServiceName`).
+  final String inputMethodId;
+
+  /// The IME's package.
+  final String packageName;
+
+  /// The IME's display label, or [packageName] if it could not be resolved.
+  final String label;
+
+  const ThirdPartyKeyboardDetected({
+    required this.inputMethodId,
+    required this.packageName,
+    required this.label,
+  });
+}
+
+/// One or more enabled accessibility services belong to apps other than the
+/// host and are not on the trusted allowlist — such a service can read typed
+/// text (a keylogger vector). Android-only; iOS never emits this.
+class SuspiciousAccessibilityServiceDetected extends CShieldEvent {
+  /// Packages owning at least one enabled, untrusted accessibility service.
+  final List<String> packageNames;
+
+  const SuspiciousAccessibilityServiceDetected({required this.packageNames});
 }
