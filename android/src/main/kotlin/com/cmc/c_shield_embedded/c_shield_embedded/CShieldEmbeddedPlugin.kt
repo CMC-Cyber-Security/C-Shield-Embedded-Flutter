@@ -65,12 +65,13 @@ class CShieldEmbeddedPlugin :
             call.method == "sdk.initialize" -> {
                 val license = call.argument<String>("license")
                     ?: return result.error(CShieldErrorCode.INVALID_ARGUMENT, "c-shield license required", null)
+                // cloudProjectNumber NULLABLE: không truyền (null) ⇒ tắt Play Integrity (KA-only),
+                // ensureTrust sẽ ném. Có truyền nhưng sai định dạng ⇒ IllegalArgumentException.
                 val cloudProjectNumber = call.argument<String>("cloudProjectNumber")
-                    ?: return result.error(CShieldErrorCode.INVALID_ARGUMENT, "cloudProjectNumber required", null)
                 try {
                     CShieldSDK.initialize(context, license, cloudProjectNumber)
                 } catch (e: IllegalArgumentException) {
-                    // cloudProjectNumber rỗng/không phải số nguyên dương → fail-fast rõ ràng.
+                    // cloudProjectNumber khác rỗng nhưng không phải số nguyên dương → fail-fast rõ ràng.
                     return result.error(CShieldErrorCode.INVALID_ARGUMENT, e.message, null)
                 }
                 CShieldSDK.setLicenseCallback(object : LicenseCallback {

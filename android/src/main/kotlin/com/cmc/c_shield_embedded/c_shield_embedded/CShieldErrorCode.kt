@@ -8,4 +8,7 @@ internal object CShieldErrorCode {
     const val INVALID_ARGUMENT      = "invalid_argument"
     const val NATIVE_ERROR          = "native_error"
     const val NOT_READY             = "not_ready"
+    // ensureTrust gọi khi initialize KHÔNG truyền cloudProjectNumber (PI tắt). Khớp
+    // CShieldPlayIntegrityDisabledException.REASON của SDK native.
+    const val PLAY_INTEGRITY_NOT_CONFIGURED = "play_integrity_not_configured"
 }

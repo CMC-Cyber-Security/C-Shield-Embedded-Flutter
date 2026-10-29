@@ -126,14 +126,19 @@ class CShieldDioInterceptor extends Interceptor {
     }
   }
 
-  /// Nâng trust trước khi ký — BEST-EFFORT: lỗi native (vd attest chưa khả dụng) KHÔNG được chặn
-  /// request, vì server mới là nơi chốt trust và sẽ trả tín hiệu phù hợp.
+  /// Nâng trust trước khi ký — BEST-EFFORT cho lỗi tạm thời (attest chưa khả dụng…): KHÔNG chặn
+  /// request vì server mới chốt trust.
+  ///
+  /// NGOẠI LỆ: `playIntegrityNotConfigured` là lỗi SAI CẤU HÌNH của bên tích hợp (đặt
+  /// `requiredLevel` nhưng `initialize` không truyền `cloudProjectNumber` ⇒ PI tắt ⇒ không thể
+  /// nâng trust) → **ném lại** để họ sửa, thay vì âm thầm gửi request với trust thấp.
   static Future<void> _ensureTrustBestEffort(TrustLevel? level) async {
     if (level == null || level == TrustLevel.unknown) return;
     try {
       await CShieldAttest.ensureTrust(level, timeoutMs: _ensureTrustTimeoutMs);
-    } on CShieldException catch (_) {
-      // bỏ qua — vẫn gửi request với trust hiện có
+    } on CShieldException catch (e) {
+      if (e.code == CShieldErrorCode.playIntegrityNotConfigured) rethrow;
+      // lỗi khác (notReady/tạm thời) → bỏ qua, vẫn gửi request với trust hiện có
     }
   }
 

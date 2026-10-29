@@ -15,6 +15,12 @@ enum CShieldErrorCode {
   ///    (mã lỗi ổn định: `device_blocked` / `attestation_not_enabled` / `device_unsupported` / … ) để xử lý.
   notReady('not_ready'),
 
+  /// `ensureTrust` được gọi nhưng Play Integrity CHƯA cấu hình — `initialize` không truyền
+  /// `cloudProjectNumber` (chủ động chọn KHÔNG dùng PI). Không có PI thì không elevate trust được.
+  /// Cách xử lý: hoặc truyền `cloudProjectNumber` để bật PI, hoặc đừng gọi `ensureTrust`/đặt
+  /// `requiredLevel` ở interceptor (thiết bị vẫn KA-only + ký request bình thường). **Chỉ Android.**
+  playIntegrityNotConfigured('play_integrity_not_configured'),
+
   invalidArgument('invalid_argument'),
   nativeError('native_error');
 

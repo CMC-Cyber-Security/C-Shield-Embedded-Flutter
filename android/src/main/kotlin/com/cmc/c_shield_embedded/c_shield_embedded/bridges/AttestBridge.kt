@@ -6,6 +6,7 @@ import com.cmc.c_shield_embedded.c_shield_embedded.CShieldErrorCode
 import com.cmc.cshield_embedded.CShieldSDK
 import com.cmc.cshield_embedded.CShieldState
 import com.cmc.cshield_embedded.TrustLevel
+import com.cmc.cshield_embedded.common.CShieldPlayIntegrityDisabledException
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -61,6 +62,9 @@ class AttestBridge {
             try {
                 val value = block()
                 mainHandler.post { result.success(value) }
+            } catch (e: CShieldPlayIntegrityDisabledException) {
+                // ensureTrust gọi khi PI tắt (không truyền cloudProjectNumber) → mã riêng cho Dart.
+                mainHandler.post { result.error(CShieldErrorCode.PLAY_INTEGRITY_NOT_CONFIGURED, e.message, null) }
             } catch (e: Throwable) {
                 mainHandler.post { result.error(CShieldErrorCode.NATIVE_ERROR, e.message, null) }
             }

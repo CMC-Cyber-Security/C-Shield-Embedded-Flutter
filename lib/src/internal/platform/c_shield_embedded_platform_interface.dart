@@ -31,7 +31,7 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   }
 
   // ── SDK ──────────────────────────────────────────────────────────────────
-  Future<void> initialize({required String license, required String cloudProjectNumber}) =>
+  Future<void> initialize({required String license, String? cloudProjectNumber}) =>
       throw UnimplementedError();
 
   /// Stream of native license lifecycle events (renewed / revoked).

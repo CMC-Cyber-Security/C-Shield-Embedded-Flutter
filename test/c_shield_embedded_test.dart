@@ -18,7 +18,7 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   }
 
   @override
-  Future<void> initialize({required String license, required String cloudProjectNumber}) {
+  Future<void> initialize({required String license, String? cloudProjectNumber}) {
     // TODO: implement initialize
     throw UnimplementedError();
   }

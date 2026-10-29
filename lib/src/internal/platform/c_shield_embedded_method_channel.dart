@@ -56,8 +56,12 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
   // ── Initialization ──────────────────────────────────────────────────────────────────
 
   @override
-  Future<void> initialize({required String license, required String cloudProjectNumber}) =>
-      _invoke(CShieldChannels.sdkInitialize, {'license': license, 'cloudProjectNumber': cloudProjectNumber});
+  Future<void> initialize({required String license, String? cloudProjectNumber}) =>
+      _invoke(CShieldChannels.sdkInitialize, {
+        'license': license,
+        // null ⇒ không gửi key (hoặc gửi null) → native coi là PI tắt (KA-only).
+        if (cloudProjectNumber != null) 'cloudProjectNumber': cloudProjectNumber,
+      });
 
   @override
   Stream<CShieldEvent> get events => _events ??= eventChannel
