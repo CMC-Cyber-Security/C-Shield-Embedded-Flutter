@@ -13,6 +13,6 @@ key.properties
 **/*.keystore
 **/*.jks
 
-# c-shield-sdk AAR — customer-specific build, not committed to repo.
-# Each customer receives their own AAR built with their app's signing certificate.
-app/libs/*.aar
+# # c-shield-sdk AAR — customer-specific build, not committed to repo.
+# # Each customer receives their own AAR built with their app's signing certificate.
+# app/libs/*.aar
