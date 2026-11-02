@@ -110,7 +110,14 @@ class CShieldSSL {
         }
       }
     });
-    await CShieldEmbeddedPlatform.instance.sslConfigure(pinsByHost: pinsByHost, allowRuntimeUpdates: allowRuntimeUpdates);
+    // Warm relaunch với process bị giữ sống (vd foreground service): native pinning đã được
+    // cấu hình + auto-seal (H-3) ở lần chạy trước và seal SỐNG theo process. Isolate Dart mới
+    // lại gọi configure → native từ chối (ssl_not_configured) và lỗi ném ra khỏi main() TRƯỚC
+    // runApp() → treo splash. Đã cấu hình rồi thì coi như idempotent: chỉ khôi phục map phía
+    // Dart cho isolate mới, KHÔNG gọi lại native (tránh re-seal throw).
+    if (!await isConfigured()) {
+      await CShieldEmbeddedPlatform.instance.sslConfigure(pinsByHost: pinsByHost, allowRuntimeUpdates: allowRuntimeUpdates);
+    }
     _pinsByHost = Map.unmodifiable({for (final e in pinsByHost.entries) e.key: List<String>.unmodifiable(e.value)});
   }
 
