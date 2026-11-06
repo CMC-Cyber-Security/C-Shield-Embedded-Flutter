@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -5,6 +6,7 @@ import 'package:dio/dio.dart';
 
 import '../../internal/aip/aip_normalizer.dart';
 import '../attest/c_shield_attest.dart';
+import '../attest/ensure_trust_result.dart';
 import '../attest/trust_level.dart';
 import '../exceptions/c_shield_exception.dart';
 import 'c_shield_aip.dart';
@@ -76,6 +78,7 @@ class CShieldDioInterceptor extends Interceptor {
   static const _kOriginalResponseType = '_cshield_original_response_type';
   static const _kSkipAip = '_cshield_skip_aip';
   static const _kRetried = '_cshield_retried_invalid_token';
+  static const _kRetriedTrust = '_cshield_retried_trust';
 
   /// Chờ ngắn khi [OnNotReady.blockRetry] — không treo UI lâu.
   static const _blockRetryWaitMs = 2000;
@@ -90,11 +93,12 @@ class CShieldDioInterceptor extends Interceptor {
       handler.next(options);
       return;
     }
-    // Endpoint nhạy được gắn mức: chủ động nâng trust TRƯỚC khi ký (best-effort). KHÔNG chặn theo
-    // kết quả — server mới chốt trust; nâng không đạt thì request vẫn gửi và server tự từ chối với
-    // tín hiệu phù hợp (CSHIELD_DEVICE_NOT_ALLOWED / CSHIELD_TRUST_NOT_FRESH).
+    // Endpoint nhạy được gắn mức: nâng trust chạy NỀN (fire-and-forget), KHÔNG await trong onRequest.
+    // `ensureTrust` có thể chạy Play Integrity (tới ~15s); await nó ngay trong pipeline onRequest của
+    // dio có thể TREO request (deadlock quan sát thực tế). Thay vào đó ký + gửi ngay; thiếu trust thì
+    // server trả 403 (CSHIELD_DEVICE_NOT_ALLOWED / CSHIELD_TRUST_NOT_FRESH) → onError nâng + gửi lại 1 lần.
+    unawaited(_ensureTrustBestEffort(requiredLevel?.call(options)));
     try {
-      await _ensureTrustBestEffort(requiredLevel?.call(options));
       await _sign(options);
       handler.next(options);
     } on CShieldException catch (e, st) {
@@ -126,19 +130,16 @@ class CShieldDioInterceptor extends Interceptor {
     }
   }
 
-  /// Nâng trust trước khi ký — BEST-EFFORT cho lỗi tạm thời (attest chưa khả dụng…): KHÔNG chặn
-  /// request vì server mới chốt trust.
-  ///
-  /// NGOẠI LỆ: `playIntegrityNotConfigured` là lỗi SAI CẤU HÌNH của bên tích hợp (đặt
-  /// `requiredLevel` nhưng `initialize` không truyền `cloudProjectNumber` ⇒ PI tắt ⇒ không thể
-  /// nâng trust) → **ném lại** để họ sửa, thay vì âm thầm gửi request với trust thấp.
+  /// Nâng trust NỀN (warm-up cho các request sau) — BEST-EFFORT, gọi fire-and-forget nên NUỐT mọi
+  /// lỗi (không thể ném ngược vào onRequest). Sai cấu hình (`playIntegrityNotConfigured`: đặt
+  /// `requiredLevel` nhưng `initialize` thiếu `cloudProjectNumber`) KHÔNG bị nuốt oan: route đòi
+  /// trust cao sẽ bị server 403 → onError gọi lại `ensureTrust(requireFresh)` và surface lỗi đó.
   static Future<void> _ensureTrustBestEffort(TrustLevel? level) async {
     if (level == null || level == TrustLevel.unknown) return;
     try {
       await CShieldAttest.ensureTrust(level, timeoutMs: _ensureTrustTimeoutMs);
-    } on CShieldException catch (e) {
-      if (e.code == CShieldErrorCode.playIntegrityNotConfigured) rethrow;
-      // lỗi khác (notReady/tạm thời) → bỏ qua, vẫn gửi request với trust hiện có
+    } catch (_) {
+      // Chạy nền: không để lỗi nâng trust nổi thành unhandled async error.
     }
   }
 
@@ -200,6 +201,7 @@ class CShieldDioInterceptor extends Interceptor {
           CShieldAIP.isInvalidAccessToken(response.statusCode ?? 0, bytes) &&
           await CShieldAIP.forceRefresh()) {
         opts.extra[_kRetried] = true;
+        _restoreResponseType(opts);
         try {
           final retried = await dio!.fetch(opts);
           return handler.resolve(retried);
@@ -210,7 +212,52 @@ class CShieldDioInterceptor extends Interceptor {
         }
       }
     }
+
+    // 403 trust (dưới ngưỡng = CSHIELD_DEVICE_NOT_ALLOWED, hoặc hết tươi = CSHIELD_TRUST_NOT_FRESH)
+    // → nâng trust bằng Play Integrity rồi gửi lại ĐÚNG 1 lần. Đây là nơi THAY cho việc await
+    // ensureTrust trong onRequest (vốn gây treo): phản ứng theo 403 thay vì chặn trước.
+    if (dio != null &&
+        response != null &&
+        response.statusCode == 403 &&
+        opts.extra[_kSkipAip] != true &&
+        opts.extra[_kRetriedTrust] != true) {
+      final level = requiredLevel?.call(opts);
+      if (level != null && level != TrustLevel.unknown) {
+        final bytes = _responseBytes(response.data);
+        final body = bytes == null ? '' : utf8.decode(bytes, allowMalformed: true);
+        if (body.contains('CSHIELD_DEVICE_NOT_ALLOWED') || body.contains('CSHIELD_TRUST_NOT_FRESH')) {
+          EnsureTrustResult? result;
+          try {
+            result = await CShieldAttest.ensureTrust(level, requireFresh: true, timeoutMs: _ensureTrustTimeoutMs);
+          } on CShieldException catch (e, st) {
+            // Sai cấu hình (requiredLevel nhưng initialize thiếu cloudProjectNumber) → surface để sửa.
+            if (e.code == CShieldErrorCode.playIntegrityNotConfigured) {
+              return handler.reject(DioException(requestOptions: opts, response: response, error: e, stackTrace: st));
+            }
+            // lỗi tạm thời khác → để 403 đi tiếp tới app.
+          } catch (_) {}
+          if (result == EnsureTrustResult.satisfied) {
+            opts.extra[_kRetriedTrust] = true;
+            _restoreResponseType(opts);
+            try {
+              final retried = await dio!.fetch(opts);
+              return handler.resolve(retried);
+            } on DioException catch (e) {
+              return handler.next(e);
+            } catch (_) {}
+          }
+        }
+      }
+    }
     handler.next(err);
+  }
+
+  /// Trả `responseType` về kiểu GỐC trước khi gửi lại: lượt retry chạy lại onRequest → _sign sẽ tự
+  /// ép `bytes` và ghi lại `_kOriginalResponseType`. Không khôi phục thì "kiểu gốc" bị ghi nhầm là
+  /// bytes → caller (retrofit) nhận bytes thay vì JSON. Chỉ khôi phục khi _sign từng đổi (verify bật).
+  static void _restoreResponseType(RequestOptions opts) {
+    final original = opts.extra[_kOriginalResponseType];
+    if (original is ResponseType) opts.responseType = original;
   }
 
   /// Lấy bytes thô từ response.data (đã set ResponseType.bytes khi verifyResponses). Không phải

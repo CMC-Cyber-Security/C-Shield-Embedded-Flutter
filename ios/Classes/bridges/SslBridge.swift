@@ -14,12 +14,30 @@ final class SslBridge {
         let args = call.arguments as? [String: Any] ?? [:]
         switch call.method {
         case "ssl.configure":
-            guard let pins = args["pins"] as? [String],
-                  let hostname = args["hostname"] as? String else { result(invalidArg()); return }
-            cachedPins = pins
-            cachedHostname = hostname
-            CShieldSSL.configure(pins: pins, hostname: hostname)
-            result(nil)
+            // Dart gửi `pinsByHost` (map host→pins) + `allowRuntimeUpdates` (R5/H-3), KHÔNG phải
+            // `pins`+`hostname` cũ → trước đây iOS trả invalidArgument. Native iOS `CShieldSSL` hiện
+            // CHỈ single-host nên cấu hình theo từng entry của map (app pin 1 host — demo — là đủ;
+            // nhiều host thì native giữ host cuối, cần nâng cấp native multi-host sau). `allowRuntimeUpdates`:
+            // iOS chưa có cơ chế auto-seal → bỏ qua. Giữ tương thích đường cũ `pins`+`hostname`.
+            if let pinsByHost = args["pinsByHost"] as? [String: Any], !pinsByHost.isEmpty {
+                var configured = false
+                cachedPins = []
+                for (host, value) in pinsByHost {
+                    guard let pins = value as? [String], !host.isEmpty else { continue }
+                    CShieldSSL.configure(pins: pins, hostname: host)
+                    cachedPins.append(contentsOf: pins)
+                    if cachedHostname.isEmpty { cachedHostname = host }
+                    configured = true
+                }
+                configured ? result(nil) : result(invalidArg())
+            } else if let pins = args["pins"] as? [String], let hostname = args["hostname"] as? String {
+                cachedPins = pins
+                cachedHostname = hostname
+                CShieldSSL.configure(pins: pins, hostname: hostname)
+                result(nil)
+            } else {
+                result(invalidArg())
+            }
         case "ssl.updatePins":
             guard let pins = args["pins"] as? [String],
                   let hostname = args["hostname"] as? String else { result(invalidArg()); return }

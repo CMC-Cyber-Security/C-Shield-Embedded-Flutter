@@ -7,7 +7,7 @@ import 'package:c_shield_embedded/c_shield_embedded.dart';
 import 'anti_malware_scan_page.dart';
 
 // Cấu hình Y HỆT Android sample: gọi demo-nodejs-server (Node SDK) + pin `**.onrender.com`.
-const baseUrl = 'https://demo-nodejs-server-1ina.onrender.com';
+const baseUrl = 'https://demo-nodejs-server.onrender.com';
 // Pin cho *.onrender.com (leaf CN=onrender.com + 4 intermediate GTS WE1..WE4). Khớp Android ONRENDER_PINS.
 const onrenderPins = [
   'sha256/fizfE9JVlzlRplEx7epXfqW9enrbLvwF/LU26XTPEG4=', // leaf   CN=onrender.com
@@ -234,7 +234,8 @@ class _OtpPageState extends State<OtpPage> {
           ),
         ],
       ),
-      body: Padding(
+      // SingleChildScrollView: khi bàn phím nổi lên, body co lại → cho phép cuộn thay vì bottom overflow.
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

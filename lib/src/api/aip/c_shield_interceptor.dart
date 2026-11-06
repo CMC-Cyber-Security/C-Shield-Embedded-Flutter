@@ -1,9 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
 import '../../internal/aip/aip_normalizer.dart';
 import '../attest/c_shield_attest.dart';
+import '../attest/ensure_trust_result.dart';
 import '../attest/trust_level.dart';
 import '../exceptions/c_shield_exception.dart';
 import 'c_shield_aip.dart';
@@ -72,10 +75,10 @@ class CShieldInterceptor extends http.BaseClient {
       return _inner.send(request); // không thuộc diện ký → forward nguyên bản
     }
 
-    // Endpoint nhạy được gắn mức: chủ động nâng trust TRƯỚC khi ký (best-effort). KHÔNG chặn theo
-    // kết quả — server mới chốt trust; nâng không đạt thì request vẫn gửi và server tự từ chối với
-    // tín hiệu phù hợp (CSHIELD_DEVICE_NOT_ALLOWED / CSHIELD_TRUST_NOT_FRESH).
-    await _ensureTrustBestEffort(requiredLevel?.call(request));
+    // Endpoint nhạy được gắn mức: nâng trust chạy NỀN (fire-and-forget), KHÔNG await trước khi ký.
+    // `ensureTrust` có thể chạy Play Integrity (tới ~15s); không chặn hot-path gửi request. Thiếu
+    // trust thì server trả 403 → ta nâng + gửi lại 1 lần (dưới đây).
+    unawaited(_ensureTrustBestEffort(requiredLevel?.call(request)));
 
     final (body, contentType) = _bodyAndContentType(request);
     final _Attempt attempt;
@@ -104,6 +107,27 @@ class CShieldInterceptor extends http.BaseClient {
         return (await _signProceedVerify(clone, body, contentType, isRetry: true)).response;
       }
     }
+
+    // Server từ chối vì trust (403 CSHIELD_DEVICE_NOT_ALLOWED / CSHIELD_TRUST_NOT_FRESH) → nâng
+    // trust (Play Integrity) rồi gửi lại ĐÚNG 1 lần. Đây là nơi THAY cho việc await ensureTrust
+    // trước khi ký — react theo 403 thay vì chặn trước.
+    if (attempt.retryableTrust) {
+      final level = requiredLevel?.call(request);
+      final clone = _cloneRequest(request);
+      if (level != null && level != TrustLevel.unknown && clone != null) {
+        EnsureTrustResult? result;
+        try {
+          result = await CShieldAttest.ensureTrust(level, requireFresh: true, timeoutMs: _ensureTrustTimeoutMs);
+        } on CShieldException catch (e) {
+          // Sai cấu hình (requiredLevel nhưng initialize thiếu cloudProjectNumber) → surface để sửa.
+          if (e.code == CShieldErrorCode.playIntegrityNotConfigured) rethrow;
+          // lỗi tạm thời khác → để 403 đi tiếp tới app.
+        }
+        if (result == EnsureTrustResult.satisfied) {
+          return (await _signProceedVerify(clone, body, contentType, isRetry: true)).response;
+        }
+      }
+    }
     return attempt.response;
   }
 
@@ -126,7 +150,7 @@ class CShieldInterceptor extends http.BaseClient {
     request.headers.addAll(aipHeaders);
 
     final streamed = await _inner.send(request);
-    if (!verifyResponses) return _Attempt(streamed, false);
+    if (!verifyResponses) return _Attempt(streamed, false, false);
 
     final responseBytes = await streamed.stream.toBytes();
     await CShieldAIP.verifyResponse(
@@ -147,7 +171,14 @@ class CShieldInterceptor extends http.BaseClient {
       request: streamed.request,
     );
     final retryable = !isRetry && CShieldAIP.isInvalidAccessToken(streamed.statusCode, responseBytes);
-    return _Attempt(rebuilt, retryable);
+    final retryableTrust = !isRetry && streamed.statusCode == 403 && _isTrustRejected(responseBytes);
+    return _Attempt(rebuilt, retryable, retryableTrust);
+  }
+
+  /// 403 có phải do trust (dưới ngưỡng / hết tươi) không — để quyết định nâng trust + gửi lại.
+  static bool _isTrustRejected(Uint8List bytes) {
+    final body = utf8.decode(bytes, allowMalformed: true);
+    return body.contains('CSHIELD_DEVICE_NOT_ALLOWED') || body.contains('CSHIELD_TRUST_NOT_FRESH');
   }
 
   /// Clone request để gửi lại (chỉ http.Request — bodyBytes giữ lại sau send; cs-proof cũ sẽ bị
@@ -174,9 +205,9 @@ class CShieldInterceptor extends http.BaseClient {
     if (level == null || level == TrustLevel.unknown) return;
     try {
       await CShieldAttest.ensureTrust(level, timeoutMs: _ensureTrustTimeoutMs);
-    } on CShieldException catch (e) {
-      if (e.code == CShieldErrorCode.playIntegrityNotConfigured) rethrow;
-      // lỗi khác (notReady/tạm thời) → bỏ qua, vẫn gửi request với trust hiện có
+    } catch (_) {
+      // Chạy nền (fire-and-forget): nuốt mọi lỗi. Sai cấu hình (playIntegrityNotConfigured) sẽ được
+      // surface ở nhánh retry 403 (ensureTrust(requireFresh) ném → rethrow cho app).
     }
   }
 
@@ -206,9 +237,11 @@ class CShieldInterceptor extends http.BaseClient {
   }
 }
 
-/// Kết quả một lượt ký+gửi+verify: response đã dựng lại + có phải 401 invalid-token (đáng retry) không.
+/// Kết quả một lượt ký+gửi+verify: response đã dựng lại + cờ đáng retry (401 invalid-token /
+/// 403 trust).
 class _Attempt {
   final http.StreamedResponse response;
   final bool retryableInvalidToken;
-  _Attempt(this.response, this.retryableInvalidToken);
+  final bool retryableTrust;
+  _Attempt(this.response, this.retryableInvalidToken, this.retryableTrust);
 }

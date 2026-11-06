@@ -33,9 +33,11 @@ import 'package:c_shield_embedded/src/internal/platform/c_shield_embedded_platfo
 /// Server trả `CSHIELD_DEVICE_NOT_ALLOWED` (403) ⇒ trust chưa đủ → `ensureTrust(mức)`;
 /// `CSHIELD_TRUST_NOT_FRESH` (403) ⇒ trust đủ nhưng cũ → `ensureTrust(mức, requireFresh: true)`.
 ///
-/// Nền tảng chưa hỗ trợ attest v2 (iOS hiện tại) → mọi hàm trả giá trị "không khả dụng"
-/// ([CShieldState.unavailable] / [TrustLevel.unknown] / [EnsureTrustResult.unavailable]) thay vì
-/// ném lỗi, để app dùng chung một luồng cho cả hai nền tảng.
+/// Hỗ trợ cả **Android** (Key Attestation TEE/StrongBox + Play Integrity, tối đa L5) lẫn **iOS**
+/// (Apple App Attest, Secure Enclave, **tối đa L4** — không có StrongBox). Nếu có nền tảng nào chưa
+/// cài method (vd bản cũ) → mọi hàm trả giá trị "không khả dụng" ([CShieldState.unavailable] /
+/// [TrustLevel.unknown] / [EnsureTrustResult.unavailable]) thay vì ném lỗi, để app dùng chung một
+/// luồng cho cả hai nền tảng.
 class CShieldAttest {
   CShieldAttest._();
 

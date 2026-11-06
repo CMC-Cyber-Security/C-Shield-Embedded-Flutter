@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 73;
+	objectVersion = 54;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -74,7 +74,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		9368AE9E30733BEF0031004D /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		A0CD9732309D874E006814D6 /* Exceptions for "Libs" folder in "Runner" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				OpenSSL.xcframework,
@@ -84,14 +84,8 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		9368AE9F30733BEF0031004D /* PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet */ = {
+		A0CD975F309D8B99006814D6 /* Exceptions for "Libs" folder in "Embed Frameworks" build phase */ = {
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			attributesByRelativePath = {
-				OpenSSL.xcframework = (
-					CodeSignOnCopy,
-					RemoveHeadersOnCopy,
-				);
-			};
 			buildPhase = 9705A1C41CF9048500538489 /* Embed Frameworks */;
 			membershipExceptions = (
 				OpenSSL.xcframework,
@@ -100,7 +94,19 @@
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		A084A18630385B5900DAC904 /* Libs */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (9368AE9E30733BEF0031004D /* PBXFileSystemSynchronizedBuildFileExceptionSet */, 9368AE9F30733BEF0031004D /* PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Libs; sourceTree = "<group>"; };
+		A084A18630385B5900DAC904 /* Libs */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A0CD9732309D874E006814D6 /* Exceptions for "Libs" folder in "Runner" target */,
+				A0CD975F309D8B99006814D6 /* Exceptions for "Libs" folder in "Embed Frameworks" build phase */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = Libs;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -283,7 +289,7 @@
 			);
 			mainGroup = 97C146E51CF9000F007C117D;
 			packageReferences = (
-				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */,
+				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
 			);
 			preferredProjectObjectVersion = 50;
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
@@ -398,13 +404,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -800,7 +802,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */ = {
+		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
 		};

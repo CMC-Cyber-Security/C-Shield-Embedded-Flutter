@@ -8,4 +8,5 @@ enum CShieldErrorCode {
     static let sslPinMismatch      = "ssl_pin_mismatch"
     static let invalidArgument     = "invalid_argument"
     static let nativeError         = "native_error"
+    static let notReady            = "not_ready"
 }

@@ -48,11 +48,11 @@ app.*.map.json
 /ios/Pods/
 /ios/Podfile.lock
 
-# CShieldSDK/OpenSSL XCFramework binaries (không commit, deploy riêng)
-ios/Libs/**/*.xcframework
+# # CShieldSDK/OpenSSL XCFramework binaries (không commit, deploy riêng)
+# ios/Libs/**/*.xcframework
 
-# CShieldSDK/OpenSSL AAR binaries (không commit, deploy riêng)
-android/Libs/**/*.aar
+# # CShieldSDK/OpenSSL AAR binaries (không commit, deploy riêng)
+# android/Libs/**/*.aar
 
 # Example app specific
 /android/.gradle/
