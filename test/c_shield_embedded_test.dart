@@ -1,5 +1,8 @@
 import 'dart:typed_data';
 
+import 'package:c_shield_embedded/src/api/attest/c_shield_state.dart';
+import 'package:c_shield_embedded/src/api/attest/ensure_trust_result.dart';
+import 'package:c_shield_embedded/src/api/attest/trust_level.dart';
 import 'package:c_shield_embedded/src/api/event/c_shield_event.dart';
 import 'package:c_shield_embedded/src/api/malware/models.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,19 +12,13 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CShieldEmbeddedPlatform {
   @override
-  Future<String> aipSign({required String payload}) {
-    // TODO: implement aipSign
-    throw UnimplementedError();
-  }
-
-  @override
   Future<void> aipVerify({required String payload, required String signature}) {
     // TODO: implement aipVerify
     throw UnimplementedError();
   }
 
   @override
-  Future<void> initialize({required String license}) {
+  Future<void> initialize({required String license, String? cloudProjectNumber}) {
     // TODO: implement initialize
     throw UnimplementedError();
   }
@@ -65,12 +62,7 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   }
 
   @override
-  Future<Map<Object, Object>> aipSignRequest(
-      {required String method,
-      required String path,
-      required String canonicalQuery,
-      required int timestampSec,
-      required String bodyHashHex}) {
+  Future<Map<Object, Object>> aipSignRequest({required String method, required String path, required String canonicalQuery, required int timestampSec, required String bodyHashHex}) {
     // TODO: implement aipSignRequest
     throw UnimplementedError();
   }
@@ -114,6 +106,46 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   @override
   // TODO: implement licenseEvents
   Stream<CShieldEvent> get events => throw UnimplementedError();
+
+  @override
+  Future<bool> aipForceRefresh({int timeoutMs = 5000}) {
+    // TODO: implement aipForceRefresh
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CShieldState> attestState() {
+    // TODO: implement attestState
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<String?> attestLastError() {
+    // TODO: implement attestLastError
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CShieldState> attestAwaitReady({int timeoutMs = 8000}) {
+    // TODO: implement attestAwaitReady
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<TrustLevel> attestCurrentTrustLevel() {
+    // TODO: implement attestCurrentTrustLevel
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<EnsureTrustResult> attestEnsureTrust({
+    required TrustLevel minLevel,
+    bool requireFresh = false,
+    int timeoutMs = 15000,
+  }) {
+    // TODO: implement attestEnsureTrust
+    throw UnimplementedError();
+  }
 }
 
 void main() {

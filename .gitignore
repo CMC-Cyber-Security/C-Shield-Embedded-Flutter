@@ -58,6 +58,8 @@ android/**/GeneratedPluginRegistrant.java
 android/key.properties
 **/*.keystore
 **/*.jks
+# Embedded SDK binaries (như xcframework iOS) — build-artifact nặng + chứa key, deploy riêng, không commit.
+**/*.aar
 
 # Dart generated files
 *.g.dart

@@ -21,9 +21,19 @@ class CShieldChannels {
   // AIP — only the cryptographic sign/verify cross to native. Body
   // normalization, payload construction and the timestamp-window check are
   // done in Dart (CShieldAIP / AIPNormalizer).
-  static const String aipSign = 'aip.sign';
   static const String aipVerify = 'aip.verify';
   static const String aipSignRequest = 'aip.signRequest';
+  // Force refresh token khi server 401 invalid-token → trả bool (đã sẵn sàng chưa).
+  static const String aipForceRefresh = 'aip.forceRefresh';
+
+  // Attestation v2 — readiness (state/lastError/awaitReady) + trust (currentTrustLevel/ensureTrust).
+  // Enum cross channel dưới dạng TÊN ("READY", "L4", "SATISFIED"); Dart map lại thành enum.
+  // ensureTrust/awaitReady BLOCK phía native → native chạy trên thread nền.
+  static const String attestState = 'attest.state';
+  static const String attestLastError = 'attest.lastError';
+  static const String attestAwaitReady = 'attest.awaitReady';
+  static const String attestCurrentTrustLevel = 'attest.currentTrustLevel';
+  static const String attestEnsureTrust = 'attest.ensureTrust';
 
   static const String malwareScanDevice = 'malware.scanDevice';
   static const String malwareAnalyzeApkFile = 'malware.analyzeApkFile';

@@ -18,32 +18,39 @@ The SDK wraps native AAR (Android) and XCFramework (iOS) libraries, so the signi
    - 3.2 [Automatic mode — CShieldDioInterceptor (Dio)](#32-automatic-mode--cshielddiointerceptor-dio)
    - 3.3 [Manual mode — CShieldAIP](#33-manual-mode--cshieldaip)
    - 3.4 [Signing protocol](#34-signing-protocol)
-4. [SSL — Certificate Pinning](#4-ssl--certificate-pinning)
-   - 4.1 [Obtaining pin values](#41-obtaining-pin-values)
-   - 4.2 [Configuring CShieldSSL](#42-configuring-cshieldssl)
-   - 4.3 [Integrating with the http package](#43-integrating-with-the-http-package)
-   - 4.4 [Integrating with Dio](#44-integrating-with-dio)
-   - 4.5 [Manual verification](#45-manual-verification)
-   - 4.6 [Capabilities, limitations, and recommendations](#46-capabilities-limitations-and-recommendations)
-5. [Malware — On-Device Threat Scanning](#5-malware--on-device-threat-scanning)
-   - 5.1 [Permissions (Android)](#51-permissions-android)
-   - 5.2 [Scanning the whole device](#52-scanning-the-whole-device)
-   - 5.3 [Analyzing a single app or APK file](#53-analyzing-a-single-app-or-apk-file)
-   - 5.4 [Result models](#54-result-models)
-   - 5.5 [API reference](#55-api-reference)
-6. [Anti-Overlay — Tapjacking Guard](#6-anti-overlay--tapjacking-guard)
-   - 6.1 [Protecting a sensitive screen](#61-protecting-a-sensitive-screen)
-   - 6.2 [Reacting to overlay events](#62-reacting-to-overlay-events)
-   - 6.3 [API reference](#63-api-reference)
-7. [Behavioral Touch Guard — Auto-Click Detection](#7-behavioral-touch-guard--auto-click-detection)
+4. [Attestation — Device Trust (L0–L5)](#4-attestation--device-trust-l0l5)
+   - 4.1 [Trust levels and the cheap-by-default model](#41-trust-levels-and-the-cheap-by-default-model)
+   - 4.2 [Readiness — state, awaitReady, stateChanges](#42-readiness--state-awaitready-statechanges)
+   - 4.3 [Raising trust — ensureTrust](#43-raising-trust--ensuretrust)
+   - 4.4 [Letting the interceptor raise trust](#44-letting-the-interceptor-raise-trust)
+   - 4.5 [Server error codes → what the app should do](#45-server-error-codes--what-the-app-should-do)
+   - 4.6 [API reference](#46-api-reference)
+5. [SSL — Certificate Pinning](#5-ssl--certificate-pinning)
+   - 5.1 [Obtaining pin values](#51-obtaining-pin-values)
+   - 5.2 [Configuring CShieldSSL](#52-configuring-cshieldssl)
+   - 5.3 [Integrating with the http package](#53-integrating-with-the-http-package)
+   - 5.4 [Integrating with Dio](#54-integrating-with-dio)
+   - 5.5 [Manual verification](#55-manual-verification)
+   - 5.6 [Capabilities, limitations, and recommendations](#56-capabilities-limitations-and-recommendations)
+6. [Malware — On-Device Threat Scanning](#6-malware--on-device-threat-scanning)
+   - 6.1 [Permissions (Android)](#61-permissions-android)
+   - 6.2 [Scanning the whole device](#62-scanning-the-whole-device)
+   - 6.3 [Analyzing a single app or APK file](#63-analyzing-a-single-app-or-apk-file)
+   - 6.4 [Result models](#64-result-models)
+   - 6.5 [API reference](#65-api-reference)
+7. [Anti-Overlay — Tapjacking Guard](#7-anti-overlay--tapjacking-guard)
    - 7.1 [Protecting a sensitive screen](#71-protecting-a-sensitive-screen)
-   - 7.2 [Reacting to touch-guard events](#72-reacting-to-touch-guard-events)
-   - 7.3 [API reference](#73-api-reference)
-8. [Anti-Keylogger](#8-anti-keylogger)
-   - 8.1 [Reacting to detections](#81-reacting-to-detections)
-   - 8.2 [Allowlists (Android)](#82-allowlists-android)
+   - 7.2 [Reacting to overlay events](#72-reacting-to-overlay-events)
+   - 7.3 [API reference](73-api-reference)
+8. [Behavioral Touch Guard — Auto-Click Detection](#8-behavioral-touch-guard--auto-click-detection)
+   - 8.1 [Protecting a sensitive screen](#81-protecting-a-sensitive-screen)
+   - 8.2 [Reacting to touch-guard events](82-reacting-to-touch-guard-events)
    - 8.3 [API reference](#83-api-reference)
-9. [Exceptions](#9-exceptions)
+9. [Anti-Keylogger](#9-anti-keylogger)
+   - 9.1 [Reacting to detections](#91-reacting-to-detections)
+   - 9.2 [Allowlists (Android)](#92-allowlists-android)
+   - 9.3 [API reference](#93-api-reference)
+10. [Exceptions](#9-exceptions)
 
 ---
 
@@ -205,6 +212,9 @@ final response = await client.post(
 |---|---|---|---|
 | `inner` | `http.Client?` | `http.Client()` | Inner HTTP client (pass a client with SSL pinning to combine both) |
 | `verifyResponses` | `bool` | `true` | Verify the response signature; set `false` if the server doesn't sign responses yet |
+| `signWhen` | `bool Function(http.BaseRequest)?` | `null` (sign all) | Sign only the requests this predicate accepts; others pass through unsigned and unverified |
+| `onNotReady` | `OnNotReady` | `failFast` | What to do when attestation isn't ready yet — see [4.4](#44-letting-the-interceptor-raise-trust) |
+| `requiredLevel` | `TrustLevel? Function(http.BaseRequest)?` | `null` | Minimum trust for sensitive endpoints — the interceptor calls `ensureTrust` before signing |
 
 ### 3.2 Automatic mode — CShieldDioInterceptor (Dio) - Recommended
 
@@ -231,6 +241,10 @@ final response = await dio.post('/api/v1/login', data: {'user': 'alice'});
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `verifyResponses` | `bool` | `true` | Verify the response signature; set `false` if the server doesn't sign responses |
+| `signWhen` | `bool Function(RequestOptions)?` | `null` (sign all) | Sign only the requests this predicate accepts; others pass through unsigned and unverified |
+| `dio` | `Dio?` | `null` | The same `Dio` this interceptor is added to — enables force-refresh + one retry on `401 CSHIELD_INVALID_ACCESS_TOKEN` |
+| `onNotReady` | `OnNotReady` | `failFast` | What to do when attestation isn't ready yet — see [4.4](#44-letting-the-interceptor-raise-trust) |
+| `requiredLevel` | `TrustLevel? Function(RequestOptions)?` | `null` | Minimum trust for sensitive endpoints — the interceptor calls `ensureTrust` before signing |
 
 > When `verifyResponses: true`, the interceptor temporarily forces `ResponseType.bytes` to read the raw bytes for verification, then decodes back to the original type before returning to the caller.
 
@@ -330,7 +344,162 @@ Payload the server signs:
 
 ---
 
-## 4. SSL — Certificate Pinning
+## 4. Attestation — Device Trust (L0–L5)
+
+Attestation lets the device **prove its own identity and integrity** using its secure hardware
+(Android: *Key Attestation* over TEE/StrongBox, plus *Play Integrity*). The C-Shield cloud verifies
+that proof and issues a short-lived **access token** that carries a **trust level**; your server
+verifies the token offline (JWKS) and enforces a minimum trust level per route.
+
+Enrollment starts automatically in the background right after `CShieldEmbedded.initialize()` — there
+is nothing to call to get started. The APIs below exist so the app can (a) know whether attestation
+is ready, and (b) **raise** its trust level before entering a sensitive flow.
+
+> **Android only today.** On iOS every call returns the "not available" value
+> (`CShieldState.unavailable` / `TrustLevel.unknown` / `EnsureTrustResult.unavailable`) instead of
+> throwing, so the same app code runs on both platforms.
+
+### 4.1 Trust levels and the cheap-by-default model
+
+| Level | Name | Meaning |
+|---|---|---|
+| `l0` | UNTRUSTED | Not trusted — failed/spoofed environment. Always blocked by the server. |
+| `l1` | WEAK | Weak (software key / emulator for DEV). |
+| `l2` | BASIC | Basic (one weak pillar). |
+| `l3` | PARTIAL | One **strong** pillar, the other unknown — e.g. TEE key but Play Integrity not run yet. |
+| `l4` | HARDWARE | Strong hardware + clean environment (TEE + Play Integrity passed). |
+| `l5` | STRONG | Strongest — StrongBox + strong Play Integrity. **Android only.** |
+| `unknown` | — | Not registered yet; ranks below every valid level. |
+
+**Cheap by default, expensive on demand.** Enrollment and ordinary token refresh run *Key
+Attestation only* (keep-trust), which costs **no Play Integrity quota** — so most real devices sit
+at **L3** without ever touching Google's quota. Play Integrity only runs when you ask for a higher
+level through [`ensureTrust`](#43-raising-trust--ensuretrust), when you ask for fresh proof, or when
+the 24h keep-trust window expires.
+
+> Setting `minTrustLevel: "L5"` on the server blocks **all iOS devices** — the Secure Enclave maps
+> to the "TEE" row and there is no StrongBox on iOS.
+
+### 4.2 Readiness — state, awaitReady, stateChanges
+
+`CShieldState` tells you deterministically whether a request can be signed right now:
+
+| State | When | Can send requests? |
+|---|---|---|
+| `initializing` | Background enroll/refresh in flight, no token yet | Not yet — follow your `onNotReady` policy |
+| `ready` | Token + hardware key present, trust L2–L5 | Yes |
+| `degraded` | Token + key present but trust L0/L1 | Yes — the **server** decides whether to accept |
+| `unavailable` | Permanent failure (blocked / unsupported / misconfigured) | No — **do not retry** |
+
+```dart
+// One-shot read:
+final state = await CShieldAttest.state();
+
+// Block a splash screen until enrollment finishes (or 8s elapse):
+if (await CShieldAttest.awaitReady(timeoutMs: 8000) == CShieldState.unavailable) {
+  // Permanent — show "device not supported" and read the stable reason code:
+  debugPrint('attest unavailable: ${await CShieldAttest.lastError()}');
+}
+
+// Or follow it live — the first event arrives immediately with the current state:
+final sub = CShieldAttest.stateChanges.listen((e) {
+  debugPrint('attest ${e.state.id} · trust=${e.trustLevel.id} · lastError=${e.lastError}');
+});
+await sub.cancel(); // in dispose()
+```
+
+`lastError()` returns the latest **stable** error code of the enroll/refresh flow — `device_blocked`,
+`attestation_not_enabled`, `device_unsupported`, `attestation_rejected`, `key_already_bound`,
+`transport_auth`, `network`, `rate_limited`, … When `state()` is `unavailable` this is the permanent
+reason; when `initializing` it is the transient reason currently being retried in the background.
+
+### 4.3 Raising trust — ensureTrust
+
+Call `ensureTrust` **before** a sensitive flow whose route requires L4+. Already satisfied → it
+returns immediately and costs nothing; short of the bar → it refreshes **with Play Integrity**
+(1 quota unit).
+
+```dart
+Future<void> onPayPressed() async {
+  final result = await CShieldAttest.ensureTrust(TrustLevel.l4);
+  switch (result) {
+    case EnsureTrustResult.satisfied:
+      await goPayment();
+    case EnsureTrustResult.insufficient:
+      block('This device does not meet the required security level');
+    case EnsureTrustResult.rateLimited:
+    case EnsureTrustResult.timeout:
+      retryLater(); // transient — current trust is NOT downgraded
+    case EnsureTrustResult.unavailable:
+      notSupported(); // permanent — do not retry
+  }
+}
+```
+
+For the most sensitive operations (routes that set `maxTrustAgeSeconds`), demand **fresh** proof —
+this always spends one Play Integrity unit:
+
+```dart
+await CShieldAttest.ensureTrust(TrustLevel.l4, requireFresh: true, timeoutMs: 20000);
+```
+
+> The client **raises** trust so it does not get rejected; the **server** is what decides. A client
+> can never forge a higher level, because the token is signed by the C-Shield cloud.
+
+### 4.4 Letting the interceptor raise trust
+
+Instead of calling `ensureTrust` by hand on every screen, map sensitive endpoints to the level they
+need and let the interceptor raise trust before signing (best effort — it never blocks the request
+on the client):
+
+```dart
+// Dio
+dio.interceptors.add(CShieldDioInterceptor(
+  dio: dio,
+  requiredLevel: (options) => switch (options.path) {
+    '/payment' || '/transfer' => TrustLevel.l4,
+    _ => null, // ordinary endpoints: no Play Integrity, no quota
+  },
+));
+
+// http
+final client = CShieldInterceptor(
+  requiredLevel: (request) => request.url.path == '/payment' ? TrustLevel.l4 : null,
+);
+```
+
+Both interceptors also accept `onNotReady`, which decides what happens when attestation is not
+ready yet at signing time:
+
+| Policy | Behavior |
+|---|---|
+| `OnNotReady.failFast` (default) | Throw `CShieldException(notReady)`, **do not send** the request (fail-closed) |
+| `OnNotReady.blockRetry` | Wait briefly, then try to sign once more (only when the error is `retryable`) |
+| `OnNotReady.passThrough` | Send the request **unsigned** — non-sensitive endpoints only |
+
+### 4.5 Server error codes → what the app should do
+
+| Server response | Meaning | What the app does |
+|---|---|---|
+| `403 CSHIELD_DEVICE_NOT_ALLOWED` | Trust below the route's `minTrustLevel` | `ensureTrust(level)` then retry |
+| `403 CSHIELD_TRUST_NOT_FRESH` | Trust high enough but the proof is too old | `ensureTrust(level, requireFresh: true)` then retry |
+| `401 CSHIELD_INVALID_ACCESS_TOKEN` | Token expired/rejected | Handled by the interceptors (force refresh + one retry) |
+
+### 4.6 API reference
+
+| API | Returns | Notes |
+|---|---|---|
+| `CShieldAttest.state()` | `CShieldState` | Current readiness |
+| `CShieldAttest.lastError()` | `String?` | Latest stable error code of enroll/refresh |
+| `CShieldAttest.awaitReady({timeoutMs = 8000})` | `CShieldState` | Waits for enrollment to settle |
+| `CShieldAttest.currentTrustLevel()` | `TrustLevel` | Read from the held access token — client routing only |
+| `CShieldAttest.ensureTrust(level, {requireFresh = false, timeoutMs = 15000})` | `EnsureTrustResult` | May spend Play Integrity quota |
+| `CShieldAttest.forceRefresh({timeoutMs = 5000})` | `bool` | Only needed with a hand-rolled HTTP client |
+| `CShieldAttest.stateChanges` | `Stream<AttestStateChanged>` | Emits the current state on subscribe |
+
+---
+
+## 5. SSL — Certificate Pinning
 
 Certificate pinning ensures the app only accepts the known, correct server certificate, preventing MITM even when the device trusts a rogue CA.
 
@@ -384,6 +553,21 @@ await CShieldSSL.configure(
 );
 ```
 
+**Multiple hosts** — declare every pinned host in **one** call (Android and iOS behave the same):
+
+```dart
+await CShieldSSL.configureHosts(pinsByHost: {
+  'api.example.com':   ['sha256/<leaf>', 'sha256/<intermediate>'],
+  '*.cdn.example.com': ['sha256/<...>', 'sha256/<backup>'],   // exactly one subdomain level
+  '**.onrender.com':   ['sha256/<...>', 'sha256/<backup>'],   // apex + any subdomain depth
+});
+```
+
+- If several patterns match a host, the host accepts the pins of all of them.
+- Hosts that aren't configured fall back to standard system CA validation.
+- Pins that match the **root CA** are ignored unless the native `allowRootPin` option is on. Pin the leaf or an intermediate instead.
+- **Auto-seal** (`allowRuntimeUpdates: false`, the default): once `configureHosts` succeeds, the native pin set is locked. Calling `updatePins` afterwards throws `CShieldException(sslNotConfigured)`. To rotate pins at runtime, pass `allowRuntimeUpdates: true`.
+
 **`CShieldSSL` API:**
 
 | Method | Description |
@@ -427,7 +611,7 @@ final client = CShieldInterceptor(
 // client now has both certificate pinning and automatic AIP signing/verification
 ```
 
-### 4.4 Integrating with Dio
+### 5.4 Integrating with Dio
 
 ```dart
 import 'package:c_shield_embedded/c_shield_embedded.dart';
@@ -453,7 +637,7 @@ dio.interceptors.add(const CShieldDioInterceptor());
 
 > **Buffered, not streaming.** Requests/responses are passed through native as a whole. Upload/download progress, `ResponseType.stream`, and SSE are not supported on a pinned host — see [4.6](#46-capabilities-limitations-and-recommendations).
 
-### 4.5 Manual verification
+### 5.5 Manual verification
 
 > ⚠️ `verifyPin()` **only checks the leaf certificate's SPKI** (Dart can only pass the leaf down to native) and does not perform full CA chain validation. Treat it as a secondary utility, not the primary pinning mechanism. The complete mechanism (full chain + CA validation) is `createDioAdapter()`.
 
@@ -476,7 +660,7 @@ if (!trusted) {
 }
 ```
 
-### 4.6 Capabilities, limitations, and recommendations
+### 5.6 Capabilities, limitations, and recommendations
 
 A fundamental Flutter constraint: `dart:io` **only exposes the leaf certificate** — there's no pure-Dart API to obtain the full chain. Because of this, the SDK **delegates transport to native** (OkHttp/URLSession) on the Dio path so pinning runs where the full chain is visible — this is considered the most reliable model available in Flutter.
 
@@ -514,11 +698,11 @@ A fundamental Flutter constraint: `dart:io` **only exposes the leaf certificate*
 
 ---
 
-## 5. Malware — On-Device Threat Scanning
+## 6. Malware — On-Device Threat Scanning
 
 The malware module scans the device for threats: it inspects installed apps (and, when storage permission is granted, files on disk) and classifies findings into categories such as virus, blacklist, accessibility abuse, suspicious, and untrusted.
 
-> ⚠️ **Android only.** The scanner is backed by the Android native SDK. On iOS these APIs are **not** available (the plugin exposes no malware channel) — guard every call with `Platform.isAndroid`, or the method channel throws `CShieldException(nativeError)`.
+> ⚠️ **Android only.** The scanner is backed by the Android native SDK. iOS sandboxing does not allow an app to inspect other apps, so these APIs do not exist on iOS. Check `CShieldMalware.isSupported` before calling or showing malware UI; on iOS, `scanDevice` / `analyzeApkFile` / `analyzeInstalledApp` throw `CShieldException(CShieldErrorCode.unsupportedPlatform)` and `stopScan` does nothing.
 
 All methods live on `CShieldMalware`:
 
@@ -531,7 +715,7 @@ if (Platform.isAndroid) {
 }
 ```
 
-### 5.1 Permissions (Android)
+### 6.1 Permissions (Android)
 
 Scanning **installed apps** requires no storage permission. Scanning **files** does — declare the storage permissions in `android/app/src/main/AndroidManifest.xml`:
 
@@ -549,7 +733,7 @@ Scanning **installed apps** requires no storage permission. Scanning **files** d
 
 When storage access is missing, `scanDevice()` still completes but only covers installed apps; the returned `DeviceScanResult.storagePermissionGranted` is `false` and `totalFiles` reflects the reduced coverage.
 
-### 5.2 Scanning the whole device
+### 6.2 Scanning the whole device
 
 `scanDevice()` runs a full scan and completes with a categorized `DeviceScanResult`. The scan runs natively and may take a while; call `stopScan()` to request cancellation (best-effort — the in-flight `scanDevice()` future still resolves on its own).
 
@@ -579,7 +763,7 @@ try {
 await CShieldMalware.stopScan();
 ```
 
-### 5.3 Analyzing a single app or APK file
+### 6.3 Analyzing a single app or APK file
 
 Instead of a full scan, analyze one target and get a single `ScannedPackage`:
 
@@ -595,7 +779,7 @@ print('${apk.packageName} — trust: ${apk.trustType}, source: ${apk.source}');
 
 Both throw `CShieldException(invalidArgument)` if the path/package name is missing, and `CShieldException(nativeError)` on a native failure.
 
-### 5.4 Result models
+### 6.4 Result models
 
 **`DeviceScanResult`:**
 
@@ -628,7 +812,7 @@ Both throw `CShieldException(invalidArgument)` if the path/package name is missi
 | `publisher` | `String?` | Publisher, if known |
 | `payload` | `String?` | Extra native payload data |
 
-### 5.5 API reference
+### 6.5 API reference
 
 | Method | Platform | Description |
 |---|---|---|
@@ -639,7 +823,7 @@ Both throw `CShieldException(invalidArgument)` if the path/package name is missi
 
 ---
 
-## 6. Anti-Overlay — Tapjacking Guard
+## 7. Anti-Overlay — Tapjacking Guard
 
 A runtime guard that protects the host app's **own sensitive screens** (login, OTP, money transfer…) against **overlay / tapjacking** attacks — the classic banking-trojan vector where a malicious app draws a fake or transparent window **on top** of your screen to hijack taps or trick input.
 
@@ -649,7 +833,7 @@ It wraps the current Activity's window and inspects every touch for Android's **
 
 > This complements §5: the **scan** (`DeviceScanResult.overlay`) tells you *which apps on the device could overlay/phish*; the guard below blocks an overlay *at the moment of attack* on a specific screen.
 
-### 6.1 Protecting a sensitive screen
+### 7.1 Protecting a sensitive screen
 
 Opt-in **per screen** — the SDK does not hook every screen automatically (that would false-positive on legitimate keyboards / floating bubbles). Call `protect()` when a sensitive screen appears and `unprotect()` when you leave it. In a single-Activity Flutter app this maps naturally to route transitions:
 
@@ -687,7 +871,7 @@ Observe-only (still get callbacks, but deliver obscured taps normally):
 await CShieldAntiOverlay.protect(blockObscuredTouches: false);
 ```
 
-### 6.2 Reacting to overlay events
+### 7.2 Reacting to overlay events
 
 Overlay notifications arrive on the shared `CShieldEmbedded.events` stream as `OverlayDetected` / `OverlayCleared`:
 
@@ -719,7 +903,7 @@ void dispose() {
 
 `OverlayDetected` carries `fullyObscured` (another window fully covers the view — the strongest signal) and `partiallyObscured` (partial cover, API 29+ — weaker; some OEM system UI can trigger it). `OverlayCleared` fires once when touches are no longer obscured.
 
-### 6.3 API reference
+### 7.3 API reference
 
 | Method | Platform | Description |
 |---|---|---|
@@ -730,7 +914,7 @@ Events (via `CShieldEmbedded.events`): `OverlayDetected(fullyObscured, partially
 
 ---
 
-## 7. Behavioral Touch Guard — Auto-Click Detection
+## 8. Behavioral Touch Guard — Auto-Click Detection
 
 A runtime guard that detects **machine-generated input** on the host app's **own sensitive screens** (OTP, money transfer, in-app purchase…) — auto-clickers (accessibility `dispatchGesture`), ADB `input tap`, UiAutomator, and root-level `/dev/input` injection.
 
@@ -742,7 +926,7 @@ It judges **human vs synthetic** — it does **not** identify *who* is tapping, 
 
 > This stacks cleanly with §6 on the same screen (both wrap the window callback and run). If you use both, call `unprotect()` in **reverse order** of `protect()`.
 
-### 7.1 Protecting a sensitive screen
+### 8.1 Protecting a sensitive screen
 
 Opt-in **per screen** — call `protect()` when a sensitive screen appears and `unprotect()` when you leave it:
 
@@ -782,7 +966,7 @@ await CShieldBehavioralTouchGuard.protect(
 );
 ```
 
-### 7.2 Reacting to touch-guard events
+### 8.2 Reacting to touch-guard events
 
 Verdicts arrive on the shared `CShieldEmbedded.events` stream as `SuspiciousTouchDetected` / `TouchGuardCleared`:
 
@@ -814,7 +998,7 @@ void dispose() {
 
 `SuspiciousTouchDetected` carries `riskScore` (0..100) and `reasons` — the signals that made up the score, as native `TouchGuardReason` names (e.g. `VIRTUAL_INPUT_DEVICE`, `ZERO_COORDINATE_JITTER`, `UNIFORM_TAP_INTERVAL`). `TouchGuardCleared` fires once when input looks human again.
 
-### 7.3 API reference
+### 8.3 API reference
 
 | Method | Platform | Description |
 |---|---|---|
@@ -825,7 +1009,7 @@ Events (via `CShieldEmbedded.events`): `SuspiciousTouchDetected(riskScore, reaso
 
 ---
 
-## 8. Anti-Keylogger
+## 9. Anti-Keylogger
 
 Detects the two keystroke-capture vectors a mobile app can observe:
 
@@ -836,7 +1020,7 @@ The guard is **auto-started** by `CShieldEmbedded.initialize(...)`; there is not
 
 > ⚠️ **Platform differences.** Both platforms emit `ThirdPartyKeyboardDetected`. The name says *Detected*, not *Blocked*: unlike iOS (which can refuse a third-party keyboard extension), Android cannot block the system keyboard the user chose — it only reports. **Android-only:** `SuspiciousAccessibilityServiceDetected`, and `configure()` / `runCheck()` (on iOS these resolve as no-ops — there is no keyboard allowlist and detection is automatic). iOS also does not expose the keyboard's identity, so `inputMethodId` / `packageName` arrive empty.
 
-### 8.1 Reacting to detections
+### 9.1 Reacting to detections
 
 ```dart
 _sub = CShieldEmbedded.events.listen((event) {
@@ -853,7 +1037,7 @@ _sub = CShieldEmbedded.events.listen((event) {
 
 > Subscribe **after** `initialize()`. The initial posture is not auto-checked — call `CShieldAntiKeylogger.runCheck()` once after subscribing to catch a threat already present at startup (the guard still fires automatically when the keyboard / accessibility services change afterwards).
 
-### 8.2 Allowlists (Android)
+### 9.2 Allowlists (Android)
 
 By default a keyboard is trusted if it is a system app or a well-known third-party keyboard (Gboard / Samsung / SwiftKey). Tune it, then re-evaluate:
 
@@ -866,7 +1050,7 @@ await CShieldAntiKeylogger.configure(
 await CShieldAntiKeylogger.runCheck();
 ```
 
-### 8.3 API reference
+### 9.3 API reference
 
 | Method | Platform | Description |
 |---|---|---|
@@ -877,7 +1061,7 @@ Events (via `CShieldEmbedded.events`): `ThirdPartyKeyboardDetected(inputMethodId
 
 ---
 
-## 9. Exceptions
+## 10. Exceptions
 
 All errors from the SDK are thrown as `CShieldException`:
 
@@ -886,6 +1070,8 @@ class CShieldException implements Exception {
   final CShieldErrorCode code;    // error code enum
   final String message;           // error description
   final Object? nativeCause;      // underlying native error, if any
+  final bool? retryable;          // notReady only: wait and retry (true) vs. permanent (false)
+  final String? state;            // notReady only: INITIALIZING / READY / DEGRADED / UNAVAILABLE
 }
 ```
 
@@ -901,6 +1087,8 @@ class CShieldException implements Exception {
 | `sslNotConfigured` | `createHttpClient()`/`createIOClient()`/`createDioAdapter()` was called before `CShieldSSL.configure()` |
 | `sslPinMismatch` | The server's certificate doesn't match the configured pin |
 | `notInitialized` | An API was called before `CShieldEmbedded.initialize()` |
+| `notReady` | Attestation isn't ready to sign yet (no hardware key/token). Read `retryable`: `true` → wait (`CShieldAttest.awaitReady`) and retry; `false` → permanent, do not retry, and read `message` for the stable reason code (`device_blocked`, `device_unsupported`, …) |
+| `unsupportedPlatform` | The feature doesn't exist on this platform, for example `CShieldMalware` on iOS. Check `CShieldMalware.isSupported` first |
 | `invalidArgument` | An invalid argument was provided |
 | `nativeError` | An unspecified error from the native SDK |
 
@@ -944,5 +1132,9 @@ Initialize the HTTP client (singleton)
   +-- CShieldInterceptor(inner: CShieldSSL.createIOClient())   // http package
       // or Dio:
   +-- dio.httpClientAdapter = CShieldSSL.createDioAdapter()
-  +-- dio.interceptors.add(CShieldDioInterceptor())
+  +-- dio.interceptors.add(CShieldDioInterceptor(dio: dio))
+
+Before a sensitive flow (payment/transfer)
+  +-- CShieldAttest.ensureTrust(TrustLevel.l4)                  // raises trust on demand
+  +-- CShieldAttest.ensureTrust(TrustLevel.l4, requireFresh: true)  // extra-sensitive operations
 ```

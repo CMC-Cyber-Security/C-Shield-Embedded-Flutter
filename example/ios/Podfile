@@ -1,5 +1,5 @@
-# Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+# 90068 — App Store yêu cầu deployment target ≥ 15.0 (CShieldEmbedded.xcframework min = 15.6).
+platform :ios, '15.0'
 
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
@@ -49,6 +49,8 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
 
     target.build_configurations.each do |config|
+      # 90068 — ép mọi pod lên iOS 15.0 cho khớp Runner.
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
       variant = (config.name == 'Debug') ? 'Debug' : 'Release'
 
       config.build_settings['FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]'] = (

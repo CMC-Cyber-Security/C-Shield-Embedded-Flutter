@@ -24,7 +24,9 @@ import 'package:dio/io.dart';
 /// usage. For large uploads/downloads or SSE, use a non-pinned Dio instance.
 class CShieldNativeHttpAdapter implements HttpClientAdapter {
   CShieldNativeHttpAdapter({required Set<String> hostPatterns})
-      : _hostPatterns = hostPatterns,
+      // Normalize giống native PinningConfig (lowercase, bỏ dấu chấm cuối) để `API.Example.com`
+      // trong cấu hình vẫn route đúng request tới `api.example.com` sang native.
+      : _hostPatterns = hostPatterns.map(_normalize).toSet(),
         _fallback = IOHttpClientAdapter();
 
   /// R5 — mọi host pattern được pin (exact / `*.` / `**.`). Request khớp BẤT KỲ pattern
@@ -69,7 +71,16 @@ class CShieldNativeHttpAdapter implements HttpClientAdapter {
   void close({bool force = false}) => _fallback.close(force: force);
 
   /// Khớp host theo pattern giống PinningConfig (native): exact, `*.one-level`, `**.multi`.
-  static bool _hostMatches(String host, String pattern) {
+  static String _normalize(String host) {
+    var h = host.trim().toLowerCase();
+    while (h.endsWith('.')) {
+      h = h.substring(0, h.length - 1);
+    }
+    return h;
+  }
+
+  static bool _hostMatches(String rawHost, String pattern) {
+    final host = _normalize(rawHost);
     if (pattern == host) return true;
     if (pattern.startsWith('**.')) {
       final apex = pattern.substring(3);

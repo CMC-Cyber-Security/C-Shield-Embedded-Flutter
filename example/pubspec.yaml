@@ -1,5 +1,11 @@
 name: c_shield_embedded_example
 description: "Demonstrates how to use the c_shield_embedded plugin."
+
+# version: <marketing>+<build-number>. Phần sau dấu "+" = CFBundleVersion (iOS) / versionCode (Android)
+# mà TestFlight/ASC đòi UNIQUE & TĂNG mỗi lần upload. Mỗi lần build IPA: bump "+N" → "+N+1" (phải cao
+# hơn mọi build đã upload cho CÙNG app — gồm cả native sample vì trùng bundle ID). Xem example/README.md.
+version: 1.0.0+10
+
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 

@@ -110,7 +110,14 @@ class CShieldSSL {
         }
       }
     });
-    await CShieldEmbeddedPlatform.instance.sslConfigure(pinsByHost: pinsByHost, allowRuntimeUpdates: allowRuntimeUpdates);
+    // Warm relaunch với process bị giữ sống (vd foreground service): native pinning đã được
+    // cấu hình + auto-seal (H-3) ở lần chạy trước và seal SỐNG theo process. Isolate Dart mới
+    // lại gọi configure → native từ chối (ssl_not_configured) và lỗi ném ra khỏi main() TRƯỚC
+    // runApp() → treo splash. Đã cấu hình rồi thì coi như idempotent: chỉ khôi phục map phía
+    // Dart cho isolate mới, KHÔNG gọi lại native (tránh re-seal throw).
+    if (!await isConfigured()) {
+      await CShieldEmbeddedPlatform.instance.sslConfigure(pinsByHost: pinsByHost, allowRuntimeUpdates: allowRuntimeUpdates);
+    }
     _pinsByHost = Map.unmodifiable({for (final e in pinsByHost.entries) e.key: List<String>.unmodifiable(e.value)});
   }
 
@@ -125,16 +132,29 @@ class CShieldSSL {
     _pinsByHost = Map.unmodifiable(merged);
   }
 
-  /// R5 — pin của host khớp cấu hình (exact / `*.` / `**.`), hoặc `null` nếu không pin.
-  static List<String>? _pinsForHost(String host) {
+  /// R5 — UNION pin của MỌI pattern khớp host (exact / `*.` / `**.`), hoặc `null` nếu không pin.
+  /// Khớp `PinningConfig.pinsFor` của native (Android + iOS) để Dart và native không lệch nhau.
+  static List<String>? _pinsForHost(String rawHost) {
     final map = _pinsByHost;
     if (map == null) return null;
-    final exact = map[host];
-    if (exact != null) return exact;
+    final host = _normalize(rawHost);
+    final matched = <String>{};
+    var any = false;
     for (final e in map.entries) {
-      if (_hostMatches(host, e.key)) return e.value;
+      if (_hostMatches(host, _normalize(e.key))) {
+        any = true;
+        matched.addAll(e.value.map((p) => p.trim()));
+      }
     }
-    return null;
+    return any ? matched.toList(growable: false) : null;
+  }
+
+  static String _normalize(String host) {
+    var h = host.trim().toLowerCase();
+    while (h.endsWith('.')) {
+      h = h.substring(0, h.length - 1);
+    }
+    return h;
   }
 
   /// Khớp host theo pattern giống PinningConfig (native): exact, `*.one-level`, `**.multi`.
