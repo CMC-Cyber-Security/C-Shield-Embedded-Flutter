@@ -1,5 +1,8 @@
 import 'dart:typed_data';
 
+import 'package:c_shield_embedded/src/api/attest/c_shield_state.dart';
+import 'package:c_shield_embedded/src/api/attest/ensure_trust_result.dart';
+import 'package:c_shield_embedded/src/api/attest/trust_level.dart';
 import 'package:c_shield_embedded/src/api/event/c_shield_event.dart';
 import 'package:c_shield_embedded/src/api/malware/models.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -28,7 +31,8 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   }
 
   // ── SDK ──────────────────────────────────────────────────────────────────
-  Future<void> initialize({required String license}) => throw UnimplementedError();
+  Future<void> initialize({required String license, String? cloudProjectNumber}) =>
+      throw UnimplementedError();
 
   /// Stream of native license lifecycle events (renewed / revoked).
   Stream<CShieldEvent> get events => throw UnimplementedError();
@@ -64,8 +68,6 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   // key and proxy-CA check). Body normalization, payload construction, hashing
   // and the timestamp-window check all happen in Dart (see AIPNormalizer /
   // CShieldAIP) — no fabricated request URL required.
-  Future<String> aipSign({required String payload}) => throw UnimplementedError();
-
   Future<void> aipVerify({required String payload, required String signature}) => throw UnimplementedError();
 
   Future<Map<Object?, Object?>> aipSignRequest({
@@ -74,6 +76,28 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
     required String canonicalQuery,
     required int timestampSec,
     required String bodyHashHex,
+  }) =>
+      throw UnimplementedError();
+
+  /// Force refresh token khi server 401 invalid-token. Trả `true` nếu sau đó đã sẵn sàng.
+  Future<bool> aipForceRefresh({int timeoutMs = 5000}) => throw UnimplementedError();
+
+  // ── Attestation v2 ────────────────────────────────────────────────────────
+  // Readiness + trust level. Nền tảng chưa hỗ trợ (iOS) → implementation trả giá trị "không khả
+  // dụng" thay vì ném, để app dùng chung một luồng (xem CShieldAttest).
+
+  Future<CShieldState> attestState() => throw UnimplementedError();
+
+  Future<String?> attestLastError() => throw UnimplementedError();
+
+  Future<CShieldState> attestAwaitReady({int timeoutMs = 8000}) => throw UnimplementedError();
+
+  Future<TrustLevel> attestCurrentTrustLevel() => throw UnimplementedError();
+
+  Future<EnsureTrustResult> attestEnsureTrust({
+    required TrustLevel minLevel,
+    bool requireFresh = false,
+    int timeoutMs = 15000,
   }) =>
       throw UnimplementedError();
 

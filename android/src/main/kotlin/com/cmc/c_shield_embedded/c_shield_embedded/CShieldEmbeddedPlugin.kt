@@ -2,13 +2,17 @@ package com.cmc.c_shield_embedded.c_shield_embedded
 
 import android.app.Activity
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AipBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiMalwareBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiKeyloggerBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AntiOverlayBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.BehavioralTouchGuardBridge
+import com.cmc.c_shield_embedded.c_shield_embedded.bridges.AttestBridge
 import com.cmc.c_shield_embedded.c_shield_embedded.bridges.SslBridge
 import com.cmc.cshield_embedded.CShieldSDK
+import com.cmc.cshield_embedded.CShieldState
 import com.cmc.cshield_embedded.license.models.LicenseCallback
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -31,10 +35,14 @@ class CShieldEmbeddedPlugin :
     private lateinit var eventChannel: EventChannel
     private var eventSink: EventChannel.EventSink? = null
 
+    // EventSink BẮT BUỘC gọi trên main thread; listener attest bắn từ thread nền của SDK.
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     private lateinit var context: Context
 
     private lateinit var sslBridge: SslBridge
     private lateinit var aipBridge: AipBridge
+    private lateinit var attestBridge: AttestBridge
     private lateinit var malwareBridge: AntiMalwareBridge
     private lateinit var antiOverlayBridge: AntiOverlayBridge
     private lateinit var btgBridge: BehavioralTouchGuardBridge
@@ -44,6 +52,10 @@ class CShieldEmbeddedPlugin :
     // host Activity to wrap its window callback.
     private var activity: Activity? = null
 
+    // Listener trạng thái attestation — giữ tham chiếu để gỡ khi detach (tránh rò engine cũ).
+    // Đăng ký MỘT lần sau initialize đầu tiên (hot-restart gọi lại initialize, không nhân bản).
+    private var attestStateListener: ((CShieldState) -> Unit)? = null
+
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         context = flutterPluginBinding.applicationContext
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "c_shield_embedded")
@@ -51,6 +63,7 @@ class CShieldEmbeddedPlugin :
 
         sslBridge = SslBridge()
         aipBridge = AipBridge(context)
+        attestBridge = AttestBridge()
         malwareBridge = AntiMalwareBridge(context)
         antiOverlayBridge = AntiOverlayBridge({ activity }, { eventSink })
         btgBridge = BehavioralTouchGuardBridge({ activity }, { eventSink })
@@ -70,7 +83,15 @@ class CShieldEmbeddedPlugin :
             call.method == "sdk.initialize" -> {
                 val license = call.argument<String>("license")
                     ?: return result.error(CShieldErrorCode.INVALID_ARGUMENT, "c-shield license required", null)
-                CShieldSDK.initialize(context, license)
+                // cloudProjectNumber NULLABLE: không truyền (null) ⇒ tắt Play Integrity (KA-only),
+                // ensureTrust sẽ ném. Có truyền nhưng sai định dạng ⇒ IllegalArgumentException.
+                val cloudProjectNumber = call.argument<String>("cloudProjectNumber")
+                try {
+                    CShieldSDK.initialize(context, license, cloudProjectNumber)
+                } catch (e: IllegalArgumentException) {
+                    // cloudProjectNumber khác rỗng nhưng không phải số nguyên dương → fail-fast rõ ràng.
+                    return result.error(CShieldErrorCode.INVALID_ARGUMENT, e.message, null)
+                }
                 CShieldSDK.setLicenseCallback(object : LicenseCallback {
                     override fun onLicenseRenewed(newJwt: String) {
                         eventSink?.success(mapOf(
@@ -85,10 +106,12 @@ class CShieldEmbeddedPlugin :
                         ))
                     }
                 })
+                registerAttestStateListener()
                 result.success(null)
             }
             call.method.startsWith("ssl.") -> sslBridge.handle(call, result)
             call.method.startsWith("aip.") -> aipBridge.handle(call, result)
+            call.method.startsWith("attest.") -> attestBridge.handle(call, result)
             call.method.startsWith("malware.") -> malwareBridge.handle(call, result)
             call.method.startsWith("antiOverlay.") -> antiOverlayBridge.handle(call, result)
             call.method.startsWith("btg.") -> btgBridge.handle(call, result)
@@ -99,6 +122,31 @@ class CShieldEmbeddedPlugin :
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        attestStateListener?.let { CShieldSDK.removeStateListener(it) }
+        attestStateListener = null
+    }
+
+    /**
+     * Đẩy đổi trạng thái attestation lên Dart (`CShieldEmbedded.events`) để app cập nhật UI /
+     * quyết định chờ hay chặn. SDK gọi listener NGAY với trạng thái hiện tại lúc đăng ký; nếu Dart
+     * subscribe muộn hơn thì [onListen] bắn lại — Dart luôn có state đầu tiên mà không cần poll.
+     */
+    private fun registerAttestStateListener() {
+        if (attestStateListener != null) return
+        val listener: (CShieldState) -> Unit = ::emitAttestState
+        attestStateListener = listener
+        CShieldSDK.addStateListener(listener)
+    }
+
+    private fun emitAttestState(state: CShieldState) {
+        mainHandler.post {
+            eventSink?.success(mapOf(
+                "event" to "onAttestStateChanged",
+                "state" to state.name,
+                "trustLevel" to CShieldSDK.currentTrustLevel().name,
+                "lastError" to CShieldSDK.lastError()
+            ))
+        }
     }
 
     override fun onListen(
@@ -106,6 +154,9 @@ class CShieldEmbeddedPlugin :
         events: EventChannel.EventSink?
     ) {
         eventSink = events
+        // Dart thường subscribe SAU initialize (vd trong initState) nên đã bỏ lỡ phát đầu tiên của
+        // listener → bắn lại trạng thái hiện tại ngay khi có sink, để UI không treo ở "chưa biết".
+        if (attestStateListener != null) emitAttestState(CShieldSDK.state())
     }
 
     override fun onCancel(arguments: Any?) {

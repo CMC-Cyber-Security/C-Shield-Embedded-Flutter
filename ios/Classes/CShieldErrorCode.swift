@@ -8,4 +8,7 @@ enum CShieldErrorCode {
     static let sslPinMismatch      = "ssl_pin_mismatch"
     static let invalidArgument     = "invalid_argument"
     static let nativeError         = "native_error"
+    static let notReady            = "not_ready"
+    /// Tính năng chỉ có trên Android (vd `malware.*`) — iOS trả mã này thay vì notImplemented âm thầm.
+    static let unsupportedPlatform = "unsupported_platform"
 }

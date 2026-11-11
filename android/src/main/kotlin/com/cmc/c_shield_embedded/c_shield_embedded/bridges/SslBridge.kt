@@ -27,6 +27,9 @@ class SslBridge {
     private val executor = Executors.newCachedThreadPool()
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // Client gốc chỉ để chia sẻ ConnectionPool/Dispatcher; mọi request tạo bằng newBuilder().
+    private val baseClient: OkHttpClient by lazy { OkHttpClient() }
+
     fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "ssl.configure"          -> handleConfigure(call, result)
@@ -59,6 +62,9 @@ class SslBridge {
         } catch (e: IllegalStateException) {
             // Đã seal (configure trước đó ở chế độ auto-seal) → cấu hình pin bị khoá.
             result.error(CShieldErrorCode.SSL_NOT_CONFIGURED, e.message, null)
+        } catch (e: IllegalArgumentException) {
+            // Host/pin sai format (PinningConfig validate) — cùng mã với iOS (CShieldSSLError.invalidConfiguration).
+            result.error(CShieldErrorCode.INVALID_ARGUMENT, e.message, null)
         } catch (e: Throwable) {
             result.error(CShieldErrorCode.NATIVE_ERROR, e.message, null)
         }
@@ -75,6 +81,8 @@ class SslBridge {
         } catch (e: IllegalStateException) {
             // H-3 — pinning đã auto-seal: updatePins chỉ chạy nếu configure(allowRuntimeUpdates=true).
             result.error(CShieldErrorCode.SSL_NOT_CONFIGURED, e.message, null)
+        } catch (e: IllegalArgumentException) {
+            result.error(CShieldErrorCode.INVALID_ARGUMENT, e.message, null)
         } catch (e: Throwable) {
             result.error(CShieldErrorCode.NATIVE_ERROR, e.message, null)
         }
@@ -100,11 +108,11 @@ class SslBridge {
             val factory = CertificateFactory.getInstance("X.509")
             val cert = factory.generateCertificate(ByteArrayInputStream(certBytes)) as X509Certificate
 
-            // CShieldTrustManager.checkServerTrusted performs:
-            //   1. System CA validation via X509TrustManagerExtensions (blocks user-installed CAs)
-            //   2. SPKI pin verification against configured pins
-            CShieldSSL.getTrustManager().checkServerTrusted(arrayOf(cert), "RSA")
-            result.success(true)
+            // CShieldSSL.verifyPin(host, chain): pin của ĐÚNG host (multi-host) + system CA khi chuỗi đủ,
+            // hoặc kiểm tra cấu trúc (hạn dùng + hostname) khi chỉ có leaf (dart:io chỉ đưa leaf).
+            // Trước đây gọi getTrustManager().checkServerTrusted(chain, "RSA") — bản KHÔNG host ⇒
+            // strictUnknownHost luôn fail ⇒ verifyPin luôn false + onPinFailure báo MITM giả.
+            result.success(CShieldSSL.verifyPin(host, listOf(cert)))
         } catch (e: CertificateException) {
             result.success(false)
         } catch (e: Throwable) {
@@ -137,14 +145,17 @@ class SslBridge {
 
         executor.execute {
             try {
-                val builder = OkHttpClient.Builder()
+                // newBuilder() từ client gốc ⇒ dùng CHUNG ConnectionPool/Dispatcher: giữ keep-alive +
+                // TLS session giữa các request (trước đây mỗi request một OkHttpClient mới ⇒ handshake lại).
+                val builder = baseClient.newBuilder()
                     .sslSocketFactory(CShieldSSL.getSSLSocketFactory(), CShieldSSL.getTrustManager())
                     .followRedirects(followRedirects)
                     .followSslRedirects(followRedirects)
                     // FIX B — re-verify SPKI pin Ở NATIVE (độc lập CShieldTrustManager Java).
                     // Chạy sau handshake, TRƯỚC khi gửi request: nếu attacker hook/thay
                     // TrustManager Java để bỏ pin thì bước native này vẫn chặn MITM.
-                    // Native fail-open khi chưa sẵn sàng (trả true) nên không ảnh hưởng bình thường.
+                    // R4 — FAIL-CLOSED: verifyChainNative trả false cho host đã-pin khi native
+                    // chưa nhận pins / JNI lỗi (không còn fail-open). Host KHÔNG pin mới pass.
                     .addNetworkInterceptor { chain ->
                         val h = chain.request().url.host
                         val ders = (chain.connection()?.handshake()?.peerCertificates ?: emptyList())
