@@ -6,8 +6,7 @@ import '../../api/exceptions/c_shield_exception.dart';
 /// (`CShieldInterceptor.canonicalQuery` / `canonicalPathAndQuery` on Android,
 /// the equivalent on iOS) and the server's `parseQueryPairs` + `canonicalQuery`.
 ///
-/// After the CS-01 / CS-02 / CS-04 server fix the signed/verified payload embeds
-/// the query string in **canonical** form:
+/// The signed/verified payload embeds the query string in **canonical** form:
 ///
 /// ```
 /// request : {METHOD}.{path}[?{canonicalQuery}].{timestamp}.{bodyHash}

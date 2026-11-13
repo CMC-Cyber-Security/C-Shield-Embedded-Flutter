@@ -1,10 +1,11 @@
 import '../../internal/platform/c_shield_embedded_platform_interface.dart';
 
 /// Anti-keylogger guard for the host app. Detects the two keystroke-capture
-/// vectors an Android app can observe:
+/// vectors a mobile app can observe:
 ///
 ///  1. a third-party / untrusted keyboard (IME) set as the active input method,
-///  2. untrusted accessibility services that can read typed text.
+///  2. untrusted accessibility services that can read typed text (Android
+///     only).
 ///
 /// It is **auto-started** by `CShieldEmbedded.initialize(...)` and watches for
 /// IME / accessibility changes at runtime. Detections arrive on

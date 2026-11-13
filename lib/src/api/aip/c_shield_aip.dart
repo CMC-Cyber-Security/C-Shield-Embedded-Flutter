@@ -8,24 +8,30 @@ import 'package:c_shield_embedded/src/internal/platform/c_shield_embedded_platfo
 
 /// Low-level AIP (API Integrity Protection) API.
 ///
-/// ## Cách dùng
+/// ## How to use it
 ///
-/// **Tự động (khuyến nghị):** [CShieldInterceptor] (`http`) hoặc [CShieldDioInterceptor]
-/// (Dio) — ký request + verify response trong suốt.
+/// **Automatic (recommended):** `CShieldInterceptor` (`http` package) or
+/// `CShieldDioInterceptor` (Dio) sign requests and verify responses
+/// transparently.
 ///
-/// **Thủ công:** [signRequest] ký một request → trả header `cs-proof` để tự gắn (ký chọn lọc
-/// vài API); [verifyResponse] verify response.
+/// **Manual:** [signRequest] signs one request and returns the `cs-proof`
+/// header for you to attach; [verifyResponse] verifies a response.
 ///
-/// ## Ký request — header `cs-proof`
-/// [signRequest] trả `{'cs-proof': <base64>}` (envelope attested: accessToken + requestId +
-/// timestamp + requestHash + chữ ký ECDSA bằng hardware key). Gắn NGUYÊN map vào header rồi
-/// gửi NGAY — `requestId` one-time + `timestamp` cửa sổ ±30s → KHÔNG cache/tái dùng.
+/// ## Request signing: the `cs-proof` header
+/// [signRequest] returns `{'cs-proof': <base64>}`, an attested envelope holding
+/// the access token, a request id, a timestamp, the request hash, and an
+/// ECDSA signature made with the device's hardware key. Attach the map to the
+/// request headers as is and send the request **immediately**: the request id
+/// is single-use and the timestamp is only valid within ±30 seconds, so a
+/// proof must never be cached or reused.
 ///
-/// ## Verify response
-/// Server ký response theo `{statusCode}.{path}.{unixTimestamp}.{bodyHash}` + header
-/// `cs-timestamp`/`cs-signature`; [verifyResponse] kiểm cửa sổ ±30s rồi verify.
-/// `path` = URL path (không query); `bodyHash` = SHA-256 hex của body đã chuẩn hoá
-/// (multipart: bỏ file part, sort key, JSON-encode; còn lại: bytes thô).
+/// ## Response verification
+/// The server signs each response over
+/// `{statusCode}.{path}[?{canonicalQuery}].{unixTimestamp}.{bodyHash}` and
+/// sends the `cs-timestamp` and `cs-signature` headers. [verifyResponse]
+/// checks the ±30 second window and then verifies the signature. `path` is
+/// the raw URL path and `bodyHash` is the lowercase hex SHA-256 of the raw
+/// response bytes.
 class CShieldAIP {
   CShieldAIP._();
 
@@ -37,10 +43,11 @@ class CShieldAIP {
 
   static int _nowSeconds() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
-  /// Verifies [signature] against [payload].
+  /// Verifies [signature] against [payload] on the native side.
   ///
-  /// Throws [CShieldException] with [CShieldErrorCode.aipInvalidSignature] or
-  /// [CShieldErrorCode.aipTimestampExpired] on failure.
+  /// Throws [CShieldException] with [CShieldErrorCode.aipInvalidSignature] if
+  /// the signature does not match. This is the raw cryptographic check; the
+  /// timestamp window is checked by [verifyResponse].
   static Future<void> verify({required String payload, required String signature}) =>
       CShieldEmbeddedPlatform.instance.aipVerify(payload: payload, signature: signature);
 
@@ -53,23 +60,29 @@ class CShieldAIP {
   /// Computed entirely in Dart (see [AIPNormalizer]) — byte-identical to the
   /// native implementation — so it does not cross the method channel.
   ///
-  /// Pass the `hash` value when building a payload for [sign].
+  /// `hash` is the body hash that [signRequest] puts into the signed request.
   static Future<Map<String, dynamic>> normalizeBody(
           {required Uint8List body, String contentType = 'application/json'}) async =>
       AIPNormalizer.normalizeBodyForSigning(body: body, contentType: contentType).toMap();
 
-  // ── Mode 2b: Interceptor helpers — SDK constructs payload automatically ───
+  // ── Request signing / response verification ──────────────────────────────
 
   /// Signs an outgoing request and returns the AIP header map (`{'cs-proof': ...}`).
   ///
-  /// [path] must be the URL path only (no query string).
-  /// [body] should be normalized multipart bytes for file-upload requests
-  /// (see [normalizeBody]) or raw JSON/text bytes for regular requests.
+  /// [path] must be the URL path only. [query] is the raw query string (the
+  /// part after `?`), or `''` when there is none; it is canonicalized before
+  /// signing. [body] is the request body as sent. For `multipart/form-data`,
+  /// pass the raw multipart bytes together with the multipart [contentType]
+  /// (including its boundary): only the text fields are hashed.
   ///
-  /// The request components cross to native, which builds the canonical request,
-  /// signs it with the device hardware key and returns the `cs-proof` header
-  /// (ECDSA signature + access token). The server verifies cs-proof against the
-  /// device's registered public key.
+  /// The request components cross to native, which builds the canonical
+  /// request, signs it with the device hardware key and returns the `cs-proof`
+  /// header (ECDSA signature + access token). The server verifies `cs-proof`
+  /// against the device's registered public key.
+  ///
+  /// Throws [CShieldException] with [CShieldErrorCode.notReady] if attestation
+  /// is not ready, or [CShieldErrorCode.aipSigningFailed] if signing fails
+  /// (for example a malformed query string).
   static Future<Map<String, String>> signRequest({
     required String method,
     required String path,
@@ -91,17 +104,26 @@ class CShieldAIP {
 
   /// Verifies the AIP signature on an incoming response.
   ///
-  /// [headers] must contain `cs-timestamp` and `cs-signature`.
-  /// [body] must be the raw response bytes (not decoded).
+  /// [headers] should contain `cs-timestamp` and `cs-signature` (matched
+  /// case-insensitively). [body] must be the raw response bytes, not decoded.
+  /// Pass the same [path] and [query] the request was signed with.
   ///
-  /// The timestamp window check and payload (`{statusCode}.{path}.{timestamp}.
-  /// {bodyHash}`) are computed in Dart; only the cryptographic [verify] crosses
-  /// to native. Throws [CShieldException] on failure.
-  /// Chính sách status-aware khi response THIẾU chữ ký:
-  ///  - 2xx (success): BẮT BUỘC có `cs-timestamp` + `cs-signature` (bảo vệ toàn vẹn data) → thiếu ⇒ ném.
-  ///  - non-2xx (lỗi): server có thể cố tình KHÔNG ký (signable=false: 502/500) hoặc lỗi hạ tầng/không
-  ///    phải cshield → BỎ QUA verify, trả về (interceptor giữ status/thân thật, không che bằng exception).
-  ///  Có đủ header thì luôn verify (cả 2xx lẫn non-2xx); sai chữ ký ⇒ ném.
+  /// The timestamp window check and the payload
+  /// (`{statusCode}.{path}[?{canonicalQuery}].{timestamp}.{bodyHash}`) are
+  /// computed in Dart; only the cryptographic [verify] crosses to native.
+  /// Throws [CShieldException] on failure.
+  ///
+  /// When the signature headers are **missing**, the policy depends on the
+  /// status:
+  ///  - 2xx: the headers are mandatory, since they protect the integrity of
+  ///    the data. Missing headers throw [CShieldErrorCode.aipMissingHeader].
+  ///  - non-2xx: the server may deliberately not sign (for example a 500 or
+  ///    502), or the error may come from infrastructure in front of it.
+  ///    Verification is skipped and the call returns, so the caller sees the
+  ///    real status and body instead of an exception.
+  ///
+  /// When the headers are present, the response is always verified, whatever
+  /// its status; a bad signature throws.
   static Future<void> verifyResponse(
       {required int statusCode,
       required String path,
@@ -116,9 +138,9 @@ class CShieldAIP {
     if (timestampStr == null || signature == null) {
       if (isSuccess) {
         throw const CShieldException(
-            CShieldErrorCode.aipMissingHeader, 'Response 2xx thiếu chữ ký (cs-timestamp/cs-signature)');
+            CShieldErrorCode.aipMissingHeader, '2xx response is missing its signature (cs-timestamp/cs-signature)');
       }
-      return; // lỗi non-2xx không ký → chấp nhận, không verify
+      return; // unsigned non-2xx error → accepted, not verified
     }
 
     final timestamp = int.tryParse(timestampStr);
@@ -140,14 +162,19 @@ class CShieldAIP {
     await verify(payload: payload, signature: signature);
   }
 
-  /// Force refresh token khi server từ chối token hiện tại (401 invalid-token). Trả `true` nếu sau
-  /// đó đã sẵn sàng (có token mới) — interceptor dùng để ký lại + gửi lại 1 lần.
+  /// Forces an access-token refresh after the server rejected the current
+  /// token (401 invalid token). Returns `true` if a new token is ready
+  /// afterwards. The interceptors use it to sign again and resend once.
   static Future<bool> forceRefresh({int timeoutMs = 5000}) =>
       CShieldEmbeddedPlatform.instance.aipForceRefresh(timeoutMs: timeoutMs);
 
-  /// Response có phải 401 do access token hết hạn/không hợp lệ phía server? Dò mã
-  /// `CSHIELD_INVALID_ACCESS_TOKEN` trong body lỗi (server ký nên đã qua verify). CHỈ mã này mới đáng
-  /// force-refresh + retry; 401 khác (signature_mismatch/stale/replay) / 403 device_not_allowed thì không.
+  /// Whether a response is a 401 caused by an expired or invalid access token
+  /// on the server side. Looks for the `CSHIELD_INVALID_ACCESS_TOKEN` code in
+  /// the error body.
+  ///
+  /// Only this code is worth a forced refresh and a retry. Other 401s
+  /// (signature mismatch, stale or replayed request) and a 403 for an
+  /// insufficient trust level are not.
   static bool isInvalidAccessToken(int statusCode, Uint8List body) {
     if (statusCode != 401) return false;
     final text = _utf8OrEmpty(body);

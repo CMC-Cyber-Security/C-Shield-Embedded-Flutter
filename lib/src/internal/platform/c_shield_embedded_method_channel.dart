@@ -16,19 +16,21 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
   @visibleForTesting
   final methodChannel = const MethodChannel('c_shield_embedded');
 
-  /// The event channel that streams native license lifecycle callbacks.
+  /// The event channel that streams native SDK events (license lifecycle,
+  /// attestation state, overlay / touch-guard / keylogger detections).
   @visibleForTesting
   final eventChannel = const EventChannel(CShieldChannels.eventChannel);
 
   Stream<CShieldEvent>? _events;
 
-  // Native call
+  /// Invokes a native method and converts a [PlatformException] into a
+  /// [CShieldException].
   Future<T> _invoke<T>(String method, [dynamic args]) async {
     try {
       return await methodChannel.invokeMethod<T>(method, args) as T;
     } on PlatformException catch (e) {
-      // Giữ phân loại retryable/state mà native gửi kèm (vd not_ready) — trước đây `details` bị bỏ
-      // và "not_ready" rơi về nativeError, mất sạch thông tin để app xử lý (chờ/retry vs block).
+      // Keep the retryable/state classification the native side attaches in `details` (for
+      // example with not_ready), so the app can tell "wait and retry" from "blocked".
       bool? retryable;
       String? state;
       final details = e.details;
@@ -42,9 +44,10 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
     }
   }
 
-  /// Như [_invoke] nhưng nuốt [MissingPluginException] → `null`: nền tảng chưa cài đặt method đó
-  /// (iOS chưa có attest v2) thì coi là "không khả dụng" thay vì nổ lên app. Lỗi native THẬT
-  /// (PlatformException) vẫn ném như thường.
+  /// Like [_invoke], but turns a [MissingPluginException] into `null`: when a platform build
+  /// does not implement the method (for example an older native SDK), the feature is treated as
+  /// "not available" instead of crashing the app. REAL native errors (PlatformException) are
+  /// still thrown as usual.
   Future<T?> _invokeOptional<T>(String method, [dynamic args]) async {
     try {
       return await _invoke<T?>(method, args);
@@ -59,7 +62,8 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
   Future<void> initialize({required String license, String? cloudProjectNumber}) =>
       _invoke(CShieldChannels.sdkInitialize, {
         'license': license,
-        // null ⇒ không gửi key (hoặc gửi null) → native coi là PI tắt (KA-only).
+        // null ⇒ the key is not sent → the native side treats Play Integrity as disabled
+        // (Key Attestation only).
         if (cloudProjectNumber != null) 'cloudProjectNumber': cloudProjectNumber,
       });
 
@@ -129,15 +133,16 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
         'bodyHashHex': bodyHashHex,
       });
 
-  // Nền tảng chưa có attest v2 (iOS) → không có method này: coi như "không refresh được" (false)
-  // thay vì để MissingPluginException nổ ra khỏi interceptor giữa luồng retry 401.
+  // A platform build without this method counts as "could not refresh" (false), instead of
+  // letting a MissingPluginException escape from an interceptor in the middle of a 401 retry.
   @override
   Future<bool> aipForceRefresh({int timeoutMs = 5000}) async =>
       await _invokeOptional<bool>(CShieldChannels.aipForceRefresh, {'timeoutMs': timeoutMs}) ?? false;
 
-  // ── Attestation v2 ────────────────────────────────────────────────────────
-  // Native trả TÊN enum (String); map về enum Dart ở đây — một chỗ duy nhất. Thiếu method (nền
-  // tảng chưa hỗ trợ) → null → fromId trả mức "không khả dụng" (fail-closed).
+  // ── Attestation ───────────────────────────────────────────────────────────
+  // The native side returns enum NAMES (strings); they are mapped to Dart enums here, in one
+  // place. A missing method (unsupported platform build) → null → fromId returns the
+  // "not available" value (fail-closed).
 
   @override
   Future<CShieldState> attestState() async =>
@@ -165,6 +170,8 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
         'requireFresh': requireFresh,
         'timeoutMs': timeoutMs,
       }));
+
+  // ── Anti Malware (Android only) ───────────────────────────────────────────
 
   @override
   Future<DeviceScanResult> scanDevice() async {
@@ -213,6 +220,7 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
 
   @override
   Future<void> btgUnprotect() => _invoke(CShieldChannels.btgUnprotect);
+
   // ── Anti Keylogger ──────────────────────────────────────────────────────────
 
   @override

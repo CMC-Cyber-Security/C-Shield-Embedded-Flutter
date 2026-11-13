@@ -1,9 +1,11 @@
-/// Hành vi của interceptor khi attestation CHƯA sẵn sàng lúc ký request (khớp native `OnNotReady`).
+/// What an interceptor does when attestation is not ready at the moment a
+/// request has to be signed (mirrors the native `OnNotReady`).
 ///
-///  - [failFast] (mặc định, fail-closed): ném [CShieldException] mã
-///    [CShieldErrorCode.notReady], **KHÔNG gửi** request.
-///  - [blockRetry]: nếu lỗi `retryable` → chờ ngắn (`CShieldAttest.awaitReady`) rồi thử ký lại MỘT
-///    lần; vẫn fail thì ném.
-///  - [passThrough]: gửi request KHÔNG ký (và KHÔNG verify response) — CHỈ dùng cho endpoint
-///    KHÔNG nhạy cảm.
+///  - [failFast] (default, fail-closed): throws a `CShieldException` with code
+///    `CShieldErrorCode.notReady`. The request is **not sent**.
+///  - [blockRetry]: if the error is retryable, waits briefly
+///    (`CShieldAttest.awaitReady`) and tries to sign **once** more; throws if
+///    that fails too.
+///  - [passThrough]: sends the request **unsigned** and does not verify the
+///    response. Use for non-sensitive endpoints only.
 enum OnNotReady { failFast, blockRetry, passThrough }

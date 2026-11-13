@@ -18,18 +18,17 @@ import 'on_not_ready.dart';
 /// Add it once when creating your Dio instance:
 /// ```dart
 /// final dio = Dio(BaseOptions(baseUrl: 'https://api.example.com'));
-/// dio.interceptors.add(CShieldDioInterceptor());
+/// dio.interceptors.add(CShieldDioInterceptor(dio: dio));
 /// ```
 ///
 /// Combined with SSL pinning:
 /// ```dart
-/// import 'package:dio/io.dart';
-///
-/// dio.httpClientAdapter = IOHttpClientAdapter(
-///   createHttpClient: CShieldSSL.createHttpClient,
-/// );
-/// dio.interceptors.add(CShieldDioInterceptor());
+/// dio.httpClientAdapter = CShieldSSL.createDioAdapter();
+/// dio.interceptors.add(CShieldDioInterceptor(dio: dio));
 /// ```
+///
+/// Pass the owning `Dio` as [dio] so the interceptor can resend a request
+/// after it refreshes the token (401) or raises trust (403).
 ///
 /// Set [verifyResponses] to `false` if the server does not sign responses.
 ///
@@ -38,27 +37,40 @@ import 'on_not_ready.dart';
 /// signature verification, then decodes the bytes back to the original type
 /// (JSON or plain text) before returning to the caller.
 class CShieldDioInterceptor extends Interceptor {
+  /// Whether response signatures are verified. Defaults to `true`.
   final bool verifyResponses;
 
-  /// Chọn request nào được ký (mặc định `null` = ký TẤT CẢ). Request không khớp đi qua
-  /// KHÔNG ký + KHÔNG verify response (ký chọn lọc vài API).
+  /// Selects which requests are signed. `null` (the default) signs **all**
+  /// requests. A request the predicate rejects passes through unsigned, and
+  /// its response is not verified.
   final bool Function(RequestOptions options)? signWhen;
 
-  /// Dio để **gửi lại** request khi server 401 invalid-token (force refresh token rồi thử lại 1
-  /// lần). Phải là CHÍNH Dio mà interceptor này gắn vào (để lượt retry ký lại + verify qua
-  /// interceptor). `null` → KHÔNG tự retry (vẫn trả 401 cho app). Cách dùng:
+  /// The `Dio` used to **resend** a request after a recoverable rejection:
+  /// a 401 invalid token (the token is refreshed first) or a trust 403 (trust
+  /// is raised first, see [requiredLevel]). Each is retried once.
+  ///
+  /// It must be the **same** `Dio` this interceptor is added to, so the retry
+  /// is signed and verified by this interceptor again. With `null`, nothing is
+  /// retried and the 401/403 is returned to the app.
   /// ```dart
   /// final dio = Dio();
   /// dio.interceptors.add(CShieldDioInterceptor(dio: dio));
   /// ```
   final Dio? dio;
 
-  /// Chính sách khi attestation chưa sẵn sàng. Mặc định [OnNotReady.failFast] (fail-closed).
+  /// What to do when attestation is not ready at signing time. Defaults to
+  /// [OnNotReady.failFast] (fail-closed).
   final OnNotReady onNotReady;
 
-  /// Gắn mức trust tối thiểu cho endpoint nhạy (vd ≥L4): trả mức cần cho request đó, else `null`.
-  /// Trước khi ký, interceptor CHỦ ĐỘNG gọi [CShieldAttest.ensureTrust] để nâng (Play Integrity)
-  /// nếu thiếu — best-effort, KHÔNG chặn ở client (server mới là nơi chốt trust). Mặc định `null`:
+  /// Maps a sensitive endpoint to the minimum trust level it needs (for
+  /// example L4): return the level for that request, or `null` otherwise.
+  ///
+  /// For a mapped request the interceptor starts [CShieldAttest.ensureTrust]
+  /// in the background and sends the request without waiting. If the server
+  /// then answers with a trust 403 (`CSHIELD_DEVICE_NOT_ALLOWED` or
+  /// `CSHIELD_TRUST_NOT_FRESH`), it raises trust with fresh proof and resends
+  /// once; this needs [dio]. It never blocks a request on the client: the
+  /// server is what enforces trust. Defaults to `null`:
   /// ```dart
   /// dio.interceptors.add(CShieldDioInterceptor(
   ///   dio: dio,
@@ -80,23 +92,25 @@ class CShieldDioInterceptor extends Interceptor {
   static const _kRetried = '_cshield_retried_invalid_token';
   static const _kRetriedTrust = '_cshield_retried_trust';
 
-  /// Chờ ngắn khi [OnNotReady.blockRetry] — không treo UI lâu.
+  /// Short wait for [OnNotReady.blockRetry], so the UI is not held up for long.
   static const _blockRetryWaitMs = 2000;
 
-  /// `ensureTrust` có thể phải chạy Play Integrity (prepare + request) → cho thời gian rộng hơn.
+  /// `ensureTrust` may have to run Play Integrity (prepare and request), so it
+  /// gets a longer timeout.
   static const _ensureTrustTimeoutMs = 15000;
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
     if (signWhen != null && !signWhen!(options)) {
-      options.extra[_kSkipAip] = true; // không ký → onResponse bỏ verify
+      options.extra[_kSkipAip] = true; // not signed → onResponse skips verification
       handler.next(options);
       return;
     }
-    // Endpoint nhạy được gắn mức: nâng trust chạy NỀN (fire-and-forget), KHÔNG await trong onRequest.
-    // `ensureTrust` có thể chạy Play Integrity (tới ~15s); await nó ngay trong pipeline onRequest của
-    // dio có thể TREO request (deadlock quan sát thực tế). Thay vào đó ký + gửi ngay; thiếu trust thì
-    // server trả 403 (CSHIELD_DEVICE_NOT_ALLOWED / CSHIELD_TRUST_NOT_FRESH) → onError nâng + gửi lại 1 lần.
+    // Endpoint mapped to a trust level: raise trust in the BACKGROUND (fire-and-forget), never
+    // awaited inside onRequest. `ensureTrust` may run Play Integrity (up to ~15s), and awaiting it
+    // in Dio's onRequest pipeline can hang the request (a deadlock seen in practice). Instead, sign
+    // and send right away; if trust is too low the server answers 403
+    // (CSHIELD_DEVICE_NOT_ALLOWED / CSHIELD_TRUST_NOT_FRESH) and onError raises trust and resends once.
     unawaited(_ensureTrustBestEffort(requiredLevel?.call(options)));
     try {
       await _sign(options);
@@ -110,7 +124,7 @@ class CShieldDioInterceptor extends Interceptor {
         case OnNotReady.failFast:
           handler.reject(DioException(requestOptions: options, error: e, stackTrace: st));
         case OnNotReady.passThrough:
-          options.extra[_kSkipAip] = true; // gửi KHÔNG ký → onResponse bỏ verify
+          options.extra[_kSkipAip] = true; // sent UNSIGNED → onResponse skips verification
           handler.next(options);
         case OnNotReady.blockRetry:
           if (e.retryable == false) {
@@ -119,7 +133,7 @@ class CShieldDioInterceptor extends Interceptor {
           }
           await CShieldAttest.awaitReady(timeoutMs: _blockRetryWaitMs);
           try {
-            await _sign(options); // thử lại ĐÚNG 1 lần; vẫn fail → reject
+            await _sign(options); // retry exactly once; still failing → reject
             handler.next(options);
           } catch (e2, st2) {
             handler.reject(DioException(requestOptions: options, error: e2, stackTrace: st2));
@@ -130,21 +144,23 @@ class CShieldDioInterceptor extends Interceptor {
     }
   }
 
-  /// Nâng trust NỀN (warm-up cho các request sau) — BEST-EFFORT, gọi fire-and-forget nên NUỐT mọi
-  /// lỗi (không thể ném ngược vào onRequest). Sai cấu hình (`playIntegrityNotConfigured`: đặt
-  /// `requiredLevel` nhưng `initialize` thiếu `cloudProjectNumber`) KHÔNG bị nuốt oan: route đòi
-  /// trust cao sẽ bị server 403 → onError gọi lại `ensureTrust(requireFresh)` và surface lỗi đó.
+  /// Raises trust in the BACKGROUND (a warm-up for later requests). Best effort: it is called
+  /// fire-and-forget, so it swallows every error (nothing can be thrown back into onRequest).
+  ///
+  /// A configuration error (`playIntegrityNotConfigured`: `requiredLevel` is set but `initialize`
+  /// got no `cloudProjectNumber`) is not lost: a route that demands higher trust gets a 403 from
+  /// the server, and onError then calls `ensureTrust(requireFresh: true)` and surfaces that error.
   static Future<void> _ensureTrustBestEffort(TrustLevel? level) async {
     if (level == null || level == TrustLevel.unknown) return;
     try {
       await CShieldAttest.ensureTrust(level, timeoutMs: _ensureTrustTimeoutMs);
     } catch (_) {
-      // Chạy nền: không để lỗi nâng trust nổi thành unhandled async error.
+      // Runs in the background: never let a trust-raising failure become an unhandled async error.
     }
   }
 
-  /// Ký [options] + gắn header `cs-proof`, và (khi [verifyResponses]) ép [ResponseType.bytes] để
-  /// onResponse đọc được bytes thô mà verify chữ ký.
+  /// Signs [options] and attaches the `cs-proof` header. When [verifyResponses] is set, also
+  /// forces [ResponseType.bytes] so onResponse can read the raw bytes to verify the signature.
   Future<void> _sign(RequestOptions options) async {
     final aipHeaders = await CShieldAIP.signRequest(
       method: options.method,
@@ -190,8 +206,9 @@ class CShieldDioInterceptor extends Interceptor {
   void onError(DioException err, ErrorInterceptorHandler handler) async {
     final opts = err.requestOptions;
     final response = err.response;
-    // 401 invalid-token → force refresh token rồi gửi lại ĐÚNG 1 lần (qua chính Dio để lượt retry
-    // ký lại + verify qua interceptor; cờ _kRetried chặn lặp). Cần `dio`; không có → trả 401 như cũ.
+    // 401 invalid token → force a token refresh, then resend exactly once (through the same Dio,
+    // so the retry is signed and verified by this interceptor again; the _kRetried flag prevents
+    // a loop). Needs `dio`; without it the 401 is returned unchanged.
     if (dio != null &&
         response != null &&
         opts.extra[_kSkipAip] != true &&
@@ -213,9 +230,10 @@ class CShieldDioInterceptor extends Interceptor {
       }
     }
 
-    // 403 trust (dưới ngưỡng = CSHIELD_DEVICE_NOT_ALLOWED, hoặc hết tươi = CSHIELD_TRUST_NOT_FRESH)
-    // → nâng trust bằng Play Integrity rồi gửi lại ĐÚNG 1 lần. Đây là nơi THAY cho việc await
-    // ensureTrust trong onRequest (vốn gây treo): phản ứng theo 403 thay vì chặn trước.
+    // Trust 403 (below the minimum = CSHIELD_DEVICE_NOT_ALLOWED, or no longer fresh =
+    // CSHIELD_TRUST_NOT_FRESH) → raise trust with fresh proof, then resend exactly once. This
+    // replaces awaiting ensureTrust in onRequest (which caused hangs): react to the 403 instead
+    // of blocking up front.
     if (dio != null &&
         response != null &&
         response.statusCode == 403 &&
@@ -230,11 +248,12 @@ class CShieldDioInterceptor extends Interceptor {
           try {
             result = await CShieldAttest.ensureTrust(level, requireFresh: true, timeoutMs: _ensureTrustTimeoutMs);
           } on CShieldException catch (e, st) {
-            // Sai cấu hình (requiredLevel nhưng initialize thiếu cloudProjectNumber) → surface để sửa.
+            // Configuration error (requiredLevel set, but initialize got no cloudProjectNumber)
+            // → surface it so the integrator can fix it.
             if (e.code == CShieldErrorCode.playIntegrityNotConfigured) {
               return handler.reject(DioException(requestOptions: opts, response: response, error: e, stackTrace: st));
             }
-            // lỗi tạm thời khác → để 403 đi tiếp tới app.
+            // Any other, transient error → let the 403 continue to the app.
           } catch (_) {}
           if (result == EnsureTrustResult.satisfied) {
             opts.extra[_kRetriedTrust] = true;
@@ -252,16 +271,17 @@ class CShieldDioInterceptor extends Interceptor {
     handler.next(err);
   }
 
-  /// Trả `responseType` về kiểu GỐC trước khi gửi lại: lượt retry chạy lại onRequest → _sign sẽ tự
-  /// ép `bytes` và ghi lại `_kOriginalResponseType`. Không khôi phục thì "kiểu gốc" bị ghi nhầm là
-  /// bytes → caller (retrofit) nhận bytes thay vì JSON. Chỉ khôi phục khi _sign từng đổi (verify bật).
+  /// Restores `responseType` to its ORIGINAL value before a resend. The retry runs onRequest
+  /// again, where _sign forces `bytes` and records `_kOriginalResponseType`; without restoring
+  /// first, the "original" type would be recorded as bytes and the caller (for example Retrofit)
+  /// would receive bytes instead of JSON. Only restores when _sign changed it (verification on).
   static void _restoreResponseType(RequestOptions opts) {
     final original = opts.extra[_kOriginalResponseType];
     if (original is ResponseType) opts.responseType = original;
   }
 
-  /// Lấy bytes thô từ response.data (đã set ResponseType.bytes khi verifyResponses). Không phải
-  /// bytes → thử encode để dò mã lỗi.
+  /// Returns the raw bytes of response.data (ResponseType.bytes is set when verifyResponses is
+  /// on). If the data is not bytes, encodes it so the error code can still be looked up.
   static Uint8List? _responseBytes(dynamic data) {
     if (data == null) return null;
     if (data is Uint8List) return data;
@@ -286,8 +306,8 @@ class CShieldDioInterceptor extends Interceptor {
     return Uint8List(0);
   }
 
-  /// Normalizes FormData to match AIPUtils.normalizeMultipart() on Android/iOS:
-  /// text fields only (files skipped), sorted by key, JSON-encoded.
+  /// Normalizes FormData the same way the native SDKs normalize multipart
+  /// bodies: text fields only (files skipped), sorted by key, JSON-encoded.
   static Uint8List _normalizeFormData(FormData form) {
     final fields = <String, String>{for (final e in form.fields) e.key: e.value};
     return AIPNormalizer.normalizeFields(fields);
@@ -295,8 +315,8 @@ class CShieldDioInterceptor extends Interceptor {
 
   static String _contentType(RequestOptions options) {
     // When the body is FormData, _requestBodyBytes already normalized it to
-    // sorted-JSON bytes, so we must report application/json to native — not the
-    // original multipart/form-data content type — otherwise AIPCore tries to
+    // sorted-JSON bytes, so we must report application/json to the normalizer —
+    // not the original multipart/form-data content type — otherwise it tries to
     // parse JSON bytes as multipart and produces the wrong hash.
     if (options.data is FormData) return 'application/json';
     return options.contentType ?? options.headers['content-type']?.toString() ?? 'application/json';

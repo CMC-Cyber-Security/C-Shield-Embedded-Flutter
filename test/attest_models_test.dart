@@ -4,8 +4,9 @@ import 'package:c_shield_embedded/src/api/attest/trust_level.dart';
 import 'package:c_shield_embedded/src/api/event/c_shield_event.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Mirrors `TrustLevelTest.kt` (android) — map tên enum cross method-channel + so ngưỡng
-/// (logic điều hướng của `ensureTrust`). Enum phải khớp TÊN native, nếu không trust bị đọc sai.
+/// Mirrors `TrustLevelTest.kt` (android): maps the enum names that cross the method channel and
+/// compares levels (the routing logic behind `ensureTrust`). The enums must match the native
+/// NAMES, otherwise trust is read wrongly.
 void main() {
   group('TrustLevel', () {
     test('fromId maps native names, case-insensitively', () {
@@ -27,7 +28,7 @@ void main() {
       expect(TrustLevel.l3.atLeast(TrustLevel.l4), isFalse);
     });
 
-    test('unknown (chưa đăng ký) luôn thấp hơn mọi mức hợp lệ → ensureTrust buộc nâng', () {
+    test('unknown (not registered) ranks below every real level, so ensureTrust must raise', () {
       expect(TrustLevel.unknown.atLeast(TrustLevel.l0), isFalse);
       expect(TrustLevel.unknown.atLeast(TrustLevel.l5), isFalse);
     });
@@ -42,7 +43,7 @@ void main() {
       expect(EnsureTrustResult.fromId('RATE_LIMITED'), EnsureTrustResult.rateLimited);
     });
 
-    test('tên lạ/null → mức không khả dụng (fail-closed, vd iOS chưa hỗ trợ attest v2)', () {
+    test('unrecognized or null names map to the unavailable value (fail-closed)', () {
       expect(CShieldState.fromId(null), CShieldState.unavailable);
       expect(CShieldState.fromId('WAT'), CShieldState.unavailable);
       expect(EnsureTrustResult.fromId(null), EnsureTrustResult.unavailable);
@@ -65,7 +66,7 @@ void main() {
       expect(e.lastError, 'network');
     });
 
-    test('lastError null khi chưa có lỗi', () {
+    test('lastError is null when there has been no error', () {
       final e = CShieldEvent.fromMap({
             'event': 'onAttestStateChanged',
             'state': 'READY',

@@ -23,19 +23,27 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 
-/** CShieldEmbeddedPlugin */
+/**
+ * Android side of the `c_shield_embedded` Flutter plugin. Routes method calls to the feature
+ * bridges and streams native SDK events to Dart.
+ *
+ * Mirrored by CShieldEmbeddedPlugin.swift (iOS) — keep both in sync.
+ */
 class CShieldEmbeddedPlugin :
     FlutterPlugin,
     MethodCallHandler, EventChannel.StreamHandler, ActivityAware {
-    // The MethodChannel that will the communication between Flutter and native Android
+    // The MethodChannel that carries method calls between Flutter and native Android.
     //
     // This local reference serves to register the plugin with the Flutter Engine and unregister it
-    // when the Flutter Engine is detached from the Activity
+    // when the Flutter Engine is detached.
     private lateinit var channel: MethodChannel
+
+    // Streams native SDK events (license, attestation state, guard detections) to Dart.
     private lateinit var eventChannel: EventChannel
     private var eventSink: EventChannel.EventSink? = null
 
-    // EventSink BẮT BUỘC gọi trên main thread; listener attest bắn từ thread nền của SDK.
+    // An EventSink MUST be called on the main thread; the attestation listener fires from one of
+    // the SDK's background threads.
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var context: Context
@@ -48,12 +56,13 @@ class CShieldEmbeddedPlugin :
     private lateinit var btgBridge: BehavioralTouchGuardBridge
     private lateinit var antiKeyloggerBridge: AntiKeyloggerBridge
 
-    // Set/cleared by the ActivityAware callbacks; the anti-overlay guard needs the
+    // Set/cleared by the ActivityAware callbacks; the anti-overlay and touch guards need the
     // host Activity to wrap its window callback.
     private var activity: Activity? = null
 
-    // Listener trạng thái attestation — giữ tham chiếu để gỡ khi detach (tránh rò engine cũ).
-    // Đăng ký MỘT lần sau initialize đầu tiên (hot-restart gọi lại initialize, không nhân bản).
+    // Attestation state listener. The reference is kept so it can be removed on detach (otherwise
+    // the old engine would leak). Registered ONCE, after the first initialize: a hot restart calls
+    // initialize again and must not register a duplicate.
     private var attestStateListener: ((CShieldState) -> Unit)? = null
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
@@ -83,13 +92,14 @@ class CShieldEmbeddedPlugin :
             call.method == "sdk.initialize" -> {
                 val license = call.argument<String>("license")
                     ?: return result.error(CShieldErrorCode.INVALID_ARGUMENT, "c-shield license required", null)
-                // cloudProjectNumber NULLABLE: không truyền (null) ⇒ tắt Play Integrity (KA-only),
-                // ensureTrust sẽ ném. Có truyền nhưng sai định dạng ⇒ IllegalArgumentException.
+                // cloudProjectNumber is NULLABLE: omitted (null) ⇒ Play Integrity is off (Key
+                // Attestation only) and ensureTrust throws. Present but malformed ⇒
+                // IllegalArgumentException.
                 val cloudProjectNumber = call.argument<String>("cloudProjectNumber")
                 try {
                     CShieldSDK.initialize(context, license, cloudProjectNumber)
                 } catch (e: IllegalArgumentException) {
-                    // cloudProjectNumber khác rỗng nhưng không phải số nguyên dương → fail-fast rõ ràng.
+                    // cloudProjectNumber is non-empty but not a positive integer → fail fast, clearly.
                     return result.error(CShieldErrorCode.INVALID_ARGUMENT, e.message, null)
                 }
                 CShieldSDK.setLicenseCallback(object : LicenseCallback {
@@ -127,9 +137,10 @@ class CShieldEmbeddedPlugin :
     }
 
     /**
-     * Đẩy đổi trạng thái attestation lên Dart (`CShieldEmbedded.events`) để app cập nhật UI /
-     * quyết định chờ hay chặn. SDK gọi listener NGAY với trạng thái hiện tại lúc đăng ký; nếu Dart
-     * subscribe muộn hơn thì [onListen] bắn lại — Dart luôn có state đầu tiên mà không cần poll.
+     * Pushes attestation state changes to Dart (`CShieldEmbedded.events`) so the app can update
+     * its UI or decide whether to wait or block. The SDK calls the listener IMMEDIATELY with the
+     * current state on registration; if Dart subscribes later, [onListen] emits it again, so Dart
+     * always gets a first state without polling.
      */
     private fun registerAttestStateListener() {
         if (attestStateListener != null) return
@@ -154,8 +165,9 @@ class CShieldEmbeddedPlugin :
         events: EventChannel.EventSink?
     ) {
         eventSink = events
-        // Dart thường subscribe SAU initialize (vd trong initState) nên đã bỏ lỡ phát đầu tiên của
-        // listener → bắn lại trạng thái hiện tại ngay khi có sink, để UI không treo ở "chưa biết".
+        // Dart usually subscribes AFTER initialize (for example in initState) and has therefore
+        // missed the listener's first emission → re-emit the current state as soon as there is a
+        // sink, so the UI is not left in an "unknown" state.
         if (attestStateListener != null) emitAttestState(CShieldSDK.state())
     }
 
@@ -164,7 +176,7 @@ class CShieldEmbeddedPlugin :
     }
 
     // ── ActivityAware ──────────────────────────────────────────────────────────
-    // Track the host Activity so AntiOverlayBridge can harden its window.
+    // Track the host Activity so the anti-overlay and touch-guard bridges can harden its window.
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity

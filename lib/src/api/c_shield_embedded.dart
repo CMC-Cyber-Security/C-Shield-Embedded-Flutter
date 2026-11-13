@@ -7,18 +7,28 @@ class CShieldEmbedded {
   /// Loads the native library and starts the SDK. Call once, as early as
   /// possible in `main()`.
   ///
-  /// [cloudProjectNumber]: số hiệu Google Cloud project (cho Play Integrity), dạng **chuỗi số**
-  /// (vd `"970898117522"`). Dùng String để tránh bẫy số 64-bit khi bắc cầu. **Chỉ Android dùng**
-  /// (Play Integrity); **iOS bỏ qua** (App Attest không cần).
+  /// Device attestation starts in the background as soon as this returns; it
+  /// does not block the call.
   ///
-  /// **`null`/không truyền = KHÔNG dùng Play Integrity** (bên tích hợp chủ động): Android chạy
-  /// KA-only, bỏ warm-up, không gửi `cloud_project_number` lên BE; khi đó gọi [ensureTrust] (trực
-  /// tiếp hoặc qua interceptor `requiredLevel`) sẽ ném [CShieldException] code
-  /// `play_integrity_not_configured`. Thiết bị vẫn ký request bình thường, chỉ không elevate trust.
-  /// Truyền chuỗi KHÁC rỗng nhưng không phải số nguyên dương → native ném lỗi (fail-fast typo).
+  /// [cloudProjectNumber] is the Google Cloud project number used for Play
+  /// Integrity, as a **string of digits** (for example `"970898117522"`). It is
+  /// a string to avoid 64-bit integer pitfalls across the method channel.
+  /// **Android only**: iOS ignores it, because App Attest does not need it.
   ///
-  /// `environment` / backend URL KHÔNG truyền ở đây — native lấy từ injected params / default theo
-  /// biến thể AAR.
+  /// Passing `null`, or omitting it, deliberately **disables Play Integrity**.
+  /// Android then runs Key Attestation only, skips the Play Integrity warm-up,
+  /// and does not send `cloud_project_number` to the backend. Requests are
+  /// still signed as usual, but trust cannot be raised: calling
+  /// `CShieldAttest.ensureTrust` (directly, or through an interceptor's
+  /// `requiredLevel`) throws a [CShieldException] with code
+  /// [CShieldErrorCode.playIntegrityNotConfigured].
+  ///
+  /// A non-empty value that is not a positive integer makes the native side
+  /// throw, so a typo fails fast.
+  ///
+  /// The environment and backend URL are not passed here. The native SDK takes
+  /// them from its injected parameters, or from the defaults of the AAR
+  /// variant.
   static Future<void> initialize({
     required String license,
     String? cloudProjectNumber,
@@ -27,6 +37,11 @@ class CShieldEmbedded {
         .initialize(license: license, cloudProjectNumber: cloudProjectNumber);
   }
 
-  /// Broadcast stream of native license lifecycle events [CShieldEvent].
+  /// Broadcast stream of every native SDK event: license lifecycle,
+  /// attestation state changes, and the overlay, touch-guard and keylogger
+  /// detections. See [CShieldEvent] for the event types.
+  ///
+  /// Subscribe after [initialize]; before that the native side is not wired
+  /// up and no events are delivered.
   static Stream<CShieldEvent> get events => CShieldEmbeddedPlatform.instance.events;
 }

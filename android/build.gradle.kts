@@ -15,9 +15,7 @@ buildscript {
     }
 }
 
-// Capture plugin's own android dir before entering allprojects scope.
-// gradle.allprojects propagates local-repo to ALL projects in the build
-// (including consumer app's :app module), so no extra Gradle config needed.
+// The plugin's own android directory.
 val pluginAndroidDir = project.projectDir
 
 allprojects {
@@ -32,7 +30,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Locate c-shield-sdk-<variant>.aar — two possible locations:
+// Locate cshield-embedded-<variant>.aar — two possible locations:
 //   1. android/libs/  (plugin development, local build)
 //   2. <consumer-app>/android/app/libs/  (customer integration via pub.dev)
 fun resolveAarForVariant(variant: String): File? {
@@ -128,8 +126,8 @@ dependencies {
     debugCompileOnly(files(resolveAarForVariant("debug")))
     releaseCompileOnly(files(resolveAarForVariant("release")))
     // OkHttp is declared as 'runtime' scope in the AAR POM, so it does not land on the
-    // compile classpath automatically. We need it here to compile our bridge code that
-    // calls AIPCore.normalizeBodyForSigning(okhttp3.Request) and builds OkHttpClient.
+    // compile classpath automatically. We need it here to compile the bridge code that
+    // builds an OkHttpClient for pinned requests (SslBridge).
     // Version must match what the AAR bundles (declared in its POM).
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 }

@@ -9,6 +9,8 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'c_shield_embedded_method_channel.dart';
 
+/// The interface that platform implementations of `c_shield_embedded` must
+/// implement.
 abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   /// Constructs a CShieldEmbeddedPlatform.
   CShieldEmbeddedPlatform() : super(token: _token);
@@ -34,11 +36,13 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   Future<void> initialize({required String license, String? cloudProjectNumber}) =>
       throw UnimplementedError();
 
-  /// Stream of native license lifecycle events (renewed / revoked).
+  /// Stream of native SDK events: license lifecycle, attestation state
+  /// changes, and overlay / touch-guard / keylogger detections.
   Stream<CShieldEvent> get events => throw UnimplementedError();
 
   // ── SSL ──────────────────────────────────────────────────────────────────
-  // R5 — multi-host. H-3 — allowRuntimeUpdates=false (mặc định) ⇒ native auto-seal.
+  // Multi-host pinning. allowRuntimeUpdates = false (the default) makes the native side seal
+  // the pin set after configuration.
   Future<void> sslConfigure({required Map<String, List<String>> pinsByHost, bool allowRuntimeUpdates = false}) => throw UnimplementedError();
 
   Future<void> sslUpdatePins({required List<String> pins, required String hostname}) => throw UnimplementedError();
@@ -79,12 +83,14 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   }) =>
       throw UnimplementedError();
 
-  /// Force refresh token khi server 401 invalid-token. Trả `true` nếu sau đó đã sẵn sàng.
+  /// Forces an access-token refresh after a 401 invalid token. Returns `true`
+  /// if a new token is ready afterwards.
   Future<bool> aipForceRefresh({int timeoutMs = 5000}) => throw UnimplementedError();
 
-  // ── Attestation v2 ────────────────────────────────────────────────────────
-  // Readiness + trust level. Nền tảng chưa hỗ trợ (iOS) → implementation trả giá trị "không khả
-  // dụng" thay vì ném, để app dùng chung một luồng (xem CShieldAttest).
+  // ── Attestation ───────────────────────────────────────────────────────────
+  // Readiness + trust level. On a platform build without attestation, the implementation
+  // returns the "not available" value instead of throwing, so the app can use one code path
+  // (see CShieldAttest).
 
   Future<CShieldState> attestState() => throw UnimplementedError();
 
@@ -101,7 +107,7 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
   }) =>
       throw UnimplementedError();
 
-  // ── Anti Malware ──────────────────────────────────────────────────────────────────
+  // ── Anti Malware (Android only) ───────────────────────────────────────────
   Future<DeviceScanResult> scanDevice() => throw UnimplementedError();
 
   Future<ScannedPackage> analyzeApkFile(String filePath) => throw UnimplementedError();
@@ -128,11 +134,14 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
       throw UnimplementedError();
 
   Future<void> btgUnprotect() => throw UnimplementedError();
-  // ── Anti Keylogger (Android only) ───────────────────────────────────────────
+
+  // ── Anti Keylogger ──────────────────────────────────────────────────────────
   // Auto-started by [initialize]; detections arrive over [events] as
-  // ThirdPartyKeyboardDetected / SuspiciousAccessibilityServiceDetected.
+  // ThirdPartyKeyboardDetected (Android and iOS) /
+  // SuspiciousAccessibilityServiceDetected (Android only).
   // [antiKeyloggerConfigure] sets the trust allowlists (empty keyboard list keeps
   // the native default); [antiKeyloggerRunCheck] re-evaluates the current posture.
+  // Both are no-ops on iOS.
   Future<void> antiKeyloggerConfigure({
     bool trustSystemKeyboards = true,
     List<String> trustedKeyboardPackages = const [],

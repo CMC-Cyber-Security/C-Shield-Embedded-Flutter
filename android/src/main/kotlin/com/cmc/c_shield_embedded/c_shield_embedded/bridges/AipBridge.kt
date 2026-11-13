@@ -13,11 +13,17 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlin.collections.mutableMapOf
 
+/**
+ * AIP bridge to Dart: per-request signing (`cs-proof`), response signature verification, and
+ * forced token refresh.
+ *
+ * Mirrored by AipBridge.swift (iOS) — keep both in sync.
+ */
 class AipBridge(private val context: Context) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Ký bằng hardware key (fallback baked-key đã bỏ). Stateless → chia sẻ một instance.
+    // Signs with the device's hardware key. Stateless, so one instance is shared.
     private val requestSigner = HardwareRequestSigner()
 
     // Only the cryptographic sign/verify are exposed to Flutter. Body
@@ -33,8 +39,9 @@ class AipBridge(private val context: Context) {
         }
     }
 
-    // Force refresh token khi server 401 invalid-token (Dart interceptor gọi rồi retry request).
-    // Chạy thread nền (forceRefresh block ≤ timeoutMs). Trả Boolean = đã sẵn sàng (có token mới) chưa.
+    // Forces a token refresh after a 401 invalid token (the Dart interceptor calls this and then
+    // retries the request). Runs on a background thread, since forceRefresh blocks for up to
+    // timeoutMs. Returns a Boolean: whether a new token is ready.
     private fun handleForceRefresh(call: MethodCall, result: MethodChannel.Result) {
         val timeoutMs = (call.argument<Int>("timeoutMs") ?: 5000).toLong()
         Thread {
@@ -86,7 +93,8 @@ class AipBridge(private val context: Context) {
                 val signature = requestSigner.sign(ctx)
                 mainHandler.post { result.success(signature.fold(mutableMapOf<String, String>()) { m, it -> m.apply { put(it.name, it.value) } }) }
             } catch (e: CShieldNotReadyException) {
-                // FL-2: giữ phân loại (retryable/state) qua details thay vì ép phẳng thành aip_signing_failed.
+                // Keep the classification (retryable/state) in `details` instead of flattening
+                // it into aip_signing_failed.
                 mainHandler.post {
                     result.error(
                         CShieldErrorCode.NOT_READY,
