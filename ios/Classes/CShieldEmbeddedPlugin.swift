@@ -11,7 +11,8 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
     // Forwards native anti-keylogger detections to Dart; reads `eventSink` lazily.
     private lazy var antiKeyloggerBridge = AntiKeyloggerBridge(eventSink: { [weak self] in self?.eventSink })
 
-    // Streams native license lifecycle callbacks to Dart over the "c_shield_embedded_event" EventChannel.
+    // Streams native SDK events (license lifecycle, attestation state, keyboard detections) to
+    // Dart over the "c_shield_embedded_event" EventChannel.
     private var eventSink: FlutterEventSink?
 
     public static func register(with registrar: FlutterPluginRegistrar) {
@@ -27,7 +28,7 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         case "sdk.initialize":
             let args = call.arguments as? [String: Any] ?? [:]
             guard let license = args["license"] as? String else { result(invalidArg()); return }
-            // `cloudProjectNumber` chỉ dành cho Play Integrity (Android) — iOS (App Attest) BỎ QUA.
+            // `cloudProjectNumber` is for Play Integrity (Android) only; iOS (App Attest) IGNORES it.
             // Wire the anti-keylogger detection before init so a keyboard loaded at
             // launch is routed to Dart rather than the SDK's default warning.
             antiKeyloggerBridge.wireDetection()
@@ -42,12 +43,13 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         case let m where m.hasPrefix("antiKeylogger."):
             antiKeyloggerBridge.handle(call: call, result: result)
         case let m where m.hasPrefix("attest."):
-            // Attest v2 (register/refresh App Attest + trust L0–L4) đã có trên iOS embedded →
-            // AttestBridge mirror AttestBridge.kt. iOS tối đa L4 (Secure Enclave, không StrongBox).
+            // Attestation (App Attest registration/refresh + trust L0–L4). AttestBridge mirrors
+            // AttestBridge.kt. iOS reaches L4 at most (Secure Enclave, no StrongBox).
             attestBridge.handle(call: call, result: result)
         case let m where m.hasPrefix("malware."):
-            // Anti-malware chỉ có trên Android (AntiMalwareBridge.kt): iOS sandbox không cho app quét
-            // app khác. Trả lỗi RÕ RÀNG thay vì FlutterMethodNotImplemented (MissingPluginException âm thầm).
+            // Anti-malware exists on Android only (AntiMalwareBridge.kt): the iOS sandbox does not
+            // let an app scan other apps. Return an EXPLICIT error instead of
+            // FlutterMethodNotImplemented (which surfaces as a bare MissingPluginException).
             result(FlutterError(code: CShieldErrorCode.unsupportedPlatform,
                                 message: "\(m) is not supported on iOS (sandbox does not allow scanning other apps)",
                                 details: nil))
@@ -58,15 +60,16 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
 
     // MARK: - FlutterStreamHandler
     //
-    // Đẩy đổi trạng thái attestation (onAttestStateChanged) lên Dart (CShieldAttest.stateChanges) —
-    // EVENT-DRIVEN qua `CShield.addStateListener`, y hệt Android (CShieldSDK.addStateListener), thay cho
-    // poll 1s trước đây. Listener đăng ký MỘT lần sau initialize đầu tiên; `onListen` bắn lại trạng thái
-    // hiện tại vì Dart thường subscribe SAU initialize.
+    // Pushes attestation state changes (onAttestStateChanged) to Dart (CShieldAttest.stateChanges).
+    // EVENT-DRIVEN through `CShield.addStateListener`, exactly like Android
+    // (CShieldSDK.addStateListener); there is no polling. The listener is registered ONCE, after
+    // the first initialize; `onListen` re-emits the current state because Dart usually subscribes
+    // AFTER initialize.
 
     private var attestListenerToken: CShield.StateListenerToken?
 
     private func registerAttestStateListener() {
-        guard attestListenerToken == nil else { return }  // hot-restart gọi lại initialize
+        guard attestListenerToken == nil else { return }  // a hot restart calls initialize again
         attestListenerToken = CShield.addStateListener { [weak self] state in
             self?.emitAttestState(state)
         }
@@ -87,7 +90,7 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         if let token = attestListenerToken { CShield.removeStateListener(token) }
     }
 
-    /// Listener chạy trên thread nội bộ của SDK → chuyển về main (EventSink bắt buộc main).
+    /// The listener runs on an internal SDK thread → hop to main (an EventSink must be called on main).
     private func emitAttestState(_ state: CShieldState) {
         DispatchQueue.main.async { [weak self] in
             guard let sink = self?.eventSink else { return }

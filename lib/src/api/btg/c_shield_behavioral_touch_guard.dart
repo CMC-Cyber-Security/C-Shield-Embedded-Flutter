@@ -21,13 +21,13 @@ class CShieldBehavioralTouchGuard {
 
   /// Hardens the host's current screen against machine-generated input.
   ///
-  /// @param riskThreshold score (0..100) at or above which a touch is reported.
+  /// - [riskThreshold]: score (0..100) at or above which a touch is reported.
   ///   Omit to use the native default.
-  /// @param blockWhenDetected when true, a suspicious touch is swallowed in
+  /// - [blockWhenDetected]: when true, a suspicious touch is swallowed in
   ///   addition to emitting the event. Default false (observe and report only).
-  /// @param includeAccessibilitySignal when true, a third-party accessibility
-  ///   service adds a weak contextual signal. Off by default (e.g. TalkBack would
-  ///   otherwise contribute).
+  /// - [includeAccessibilitySignal]: when true, a third-party accessibility
+  ///   service adds a weak contextual signal. Off by default (e.g. TalkBack
+  ///   would otherwise contribute).
   static Future<void> protect({
     int? riskThreshold,
     bool blockWhenDetected = false,

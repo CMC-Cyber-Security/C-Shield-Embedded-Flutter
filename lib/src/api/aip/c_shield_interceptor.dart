@@ -33,7 +33,9 @@ import 'on_not_ready.dart';
 ///
 /// Set [verifyResponses] to `false` if the server does not sign responses.
 ///
-/// Endpoint nhạy cần trust cao thì gắn [requiredLevel] — interceptor tự `ensureTrust` trước khi ký:
+/// For a sensitive endpoint that needs a high trust level, set
+/// [requiredLevel]: the interceptor raises trust for it and retries once when
+/// the server rejects the request for insufficient trust.
 /// ```dart
 /// final client = CShieldInterceptor(
 ///   requiredLevel: (r) => r.url.path == '/payment' ? TrustLevel.l4 : null,
@@ -41,20 +43,32 @@ import 'on_not_ready.dart';
 /// ```
 class CShieldInterceptor extends http.BaseClient {
   final http.Client _inner;
+
+  /// Whether response signatures are verified. Defaults to `true`.
   final bool verifyResponses;
 
-  /// Chọn request nào được ký (mặc định `null` = ký TẤT CẢ). Request không khớp đi qua
-  /// KHÔNG ký + KHÔNG verify response (ký chọn lọc vài API).
+  /// Selects which requests are signed. `null` (the default) signs **all**
+  /// requests. A request the predicate rejects passes through unsigned, and
+  /// its response is not verified.
   final bool Function(http.BaseRequest request)? signWhen;
 
-  /// Chính sách khi attestation chưa sẵn sàng. Mặc định [OnNotReady.failFast] (fail-closed).
+  /// What to do when attestation is not ready at signing time. Defaults to
+  /// [OnNotReady.failFast] (fail-closed).
   final OnNotReady onNotReady;
 
-  /// Gắn mức trust tối thiểu cho endpoint nhạy (vd ≥L4): trả mức cần cho request đó, else `null`.
-  /// Trước khi ký, interceptor CHỦ ĐỘNG gọi [CShieldAttest.ensureTrust] để nâng (Play Integrity)
-  /// nếu thiếu — best-effort, KHÔNG chặn ở client (server mới là nơi chốt trust). Mặc định `null`.
+  /// Maps a sensitive endpoint to the minimum trust level it needs (for
+  /// example L4): return the level for that request, or `null` otherwise.
+  ///
+  /// For a mapped request the interceptor starts [CShieldAttest.ensureTrust]
+  /// in the background and sends the request without waiting. If the server
+  /// then answers with a trust 403 (`CSHIELD_DEVICE_NOT_ALLOWED` or
+  /// `CSHIELD_TRUST_NOT_FRESH`), it raises trust with fresh proof and resends
+  /// once (only an [http.Request] can be resent). It never blocks a request on
+  /// the client: the server is what enforces trust. Defaults to `null`.
   final TrustLevel? Function(http.BaseRequest request)? requiredLevel;
 
+  /// Creates the client. [inner] is the client that actually sends requests;
+  /// pass one with SSL pinning to combine both. Defaults to `http.Client()`.
   CShieldInterceptor({
     http.Client? inner,
     this.verifyResponses = true,
@@ -63,21 +77,23 @@ class CShieldInterceptor extends http.BaseClient {
     this.requiredLevel,
   }) : _inner = inner ?? http.Client();
 
-  /// Chờ ngắn khi [OnNotReady.blockRetry] — không treo UI lâu.
+  /// Short wait for [OnNotReady.blockRetry], so the UI is not held up for long.
   static const _blockRetryWaitMs = 2000;
 
-  /// `ensureTrust` có thể phải chạy Play Integrity (prepare + request) → cho thời gian rộng hơn.
+  /// `ensureTrust` may have to run Play Integrity (prepare and request), so it
+  /// gets a longer timeout.
   static const _ensureTrustTimeoutMs = 15000;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     if (signWhen != null && !signWhen!(request)) {
-      return _inner.send(request); // không thuộc diện ký → forward nguyên bản
+      return _inner.send(request); // not selected for signing → forward unchanged
     }
 
-    // Endpoint nhạy được gắn mức: nâng trust chạy NỀN (fire-and-forget), KHÔNG await trước khi ký.
-    // `ensureTrust` có thể chạy Play Integrity (tới ~15s); không chặn hot-path gửi request. Thiếu
-    // trust thì server trả 403 → ta nâng + gửi lại 1 lần (dưới đây).
+    // Endpoint mapped to a trust level: raise trust in the BACKGROUND (fire-and-forget), not
+    // awaited before signing. `ensureTrust` may run Play Integrity (up to ~15s) and must not block
+    // the request hot path. If trust is too low the server answers 403, and we raise trust and
+    // resend once (below).
     unawaited(_ensureTrustBestEffort(requiredLevel?.call(request)));
 
     final (body, contentType) = _bodyAndContentType(request);
@@ -90,17 +106,18 @@ class CShieldInterceptor extends http.BaseClient {
         case OnNotReady.failFast:
           rethrow;
         case OnNotReady.passThrough:
-          return _inner.send(request); // KHÔNG ký
+          return _inner.send(request); // sent UNSIGNED
         case OnNotReady.blockRetry:
           if (e.retryable == false) rethrow;
           await CShieldAttest.awaitReady(timeoutMs: _blockRetryWaitMs);
-          // Thử lại ĐÚNG 1 lần (request chưa hề được gửi — sign ném trước khi đi dây).
+          // Retry exactly once (the request was never sent: signing threw before it hit the wire).
           return (await _signProceedVerify(request, body, contentType, isRetry: true)).response;
       }
     }
 
-    // Server từ chối access token (401 invalid-token) → force refresh + thử lại ĐÚNG 1 lần với
-    // token mới. Chỉ clone lại được http.Request (JSON); loại khác (multipart) → trả nguyên 401.
+    // The server rejected the access token (401 invalid token) → force a refresh and retry
+    // exactly once with the new token. Only an http.Request can be cloned; for any other type
+    // (multipart, streamed) the 401 is returned as is.
     if (attempt.retryableInvalidToken) {
       final clone = _cloneRequest(request);
       if (clone != null && await CShieldAIP.forceRefresh()) {
@@ -108,9 +125,9 @@ class CShieldInterceptor extends http.BaseClient {
       }
     }
 
-    // Server từ chối vì trust (403 CSHIELD_DEVICE_NOT_ALLOWED / CSHIELD_TRUST_NOT_FRESH) → nâng
-    // trust (Play Integrity) rồi gửi lại ĐÚNG 1 lần. Đây là nơi THAY cho việc await ensureTrust
-    // trước khi ký — react theo 403 thay vì chặn trước.
+    // The server rejected the request for trust (403 CSHIELD_DEVICE_NOT_ALLOWED /
+    // CSHIELD_TRUST_NOT_FRESH) → raise trust with fresh proof, then resend exactly once. This
+    // replaces awaiting ensureTrust before signing: react to the 403 instead of blocking up front.
     if (attempt.retryableTrust) {
       final level = requiredLevel?.call(request);
       final clone = _cloneRequest(request);
@@ -119,9 +136,10 @@ class CShieldInterceptor extends http.BaseClient {
         try {
           result = await CShieldAttest.ensureTrust(level, requireFresh: true, timeoutMs: _ensureTrustTimeoutMs);
         } on CShieldException catch (e) {
-          // Sai cấu hình (requiredLevel nhưng initialize thiếu cloudProjectNumber) → surface để sửa.
+          // Configuration error (requiredLevel set, but initialize got no cloudProjectNumber)
+          // → surface it so the integrator can fix it.
           if (e.code == CShieldErrorCode.playIntegrityNotConfigured) rethrow;
-          // lỗi tạm thời khác → để 403 đi tiếp tới app.
+          // Any other, transient error → let the 403 continue to the app.
         }
         if (result == EnsureTrustResult.satisfied) {
           return (await _signProceedVerify(clone, body, contentType, isRetry: true)).response;
@@ -131,8 +149,16 @@ class CShieldInterceptor extends http.BaseClient {
     return attempt.response;
   }
 
-  /// Ký → gửi → (nếu verify) buffer body + verifyResponse(status-aware) → dựng lại StreamedResponse.
-  /// Trả kèm cờ `retryableInvalidToken` (401 invalid-token, và chưa phải lượt retry).
+  /// Signs and sends the request. When verification is on, buffers the body, runs the
+  /// status-aware `verifyResponse`, and rebuilds the StreamedResponse.
+  ///
+  /// The result also carries two flags, both `false` on a retry: `retryableInvalidToken`
+  /// (401 invalid token) and `retryableTrust` (trust 403).
+  ///
+  /// With verification off, the response is passed through as a stream, except for a 401/403 on
+  /// the first attempt: that body is buffered so the retry flags can still be computed. In that
+  /// case the error body is not signature-checked; the worst a forged one can cause is a single
+  /// extra refresh and resend.
   Future<_Attempt> _signProceedVerify(
     http.BaseRequest request,
     Uint8List body,
@@ -150,15 +176,21 @@ class CShieldInterceptor extends http.BaseClient {
     request.headers.addAll(aipHeaders);
 
     final streamed = await _inner.send(request);
-    if (!verifyResponses) return _Attempt(streamed, false, false);
+    if (!verifyResponses) {
+      // Only a first-attempt 401/403 can lead to a retry; everything else keeps streaming.
+      final mayRetry = !isRetry && (streamed.statusCode == 401 || streamed.statusCode == 403);
+      if (!mayRetry) return _Attempt(streamed, false, false);
+    }
 
     final responseBytes = await streamed.stream.toBytes();
-    await CShieldAIP.verifyResponse(
-        statusCode: streamed.statusCode,
-        path: path,
-        query: request.url.query,
-        headers: streamed.headers,
-        body: responseBytes);
+    if (verifyResponses) {
+      await CShieldAIP.verifyResponse(
+          statusCode: streamed.statusCode,
+          path: path,
+          query: request.url.query,
+          headers: streamed.headers,
+          body: responseBytes);
+    }
 
     final rebuilt = http.StreamedResponse(
       Stream.value(responseBytes),
@@ -175,14 +207,16 @@ class CShieldInterceptor extends http.BaseClient {
     return _Attempt(rebuilt, retryable, retryableTrust);
   }
 
-  /// 403 có phải do trust (dưới ngưỡng / hết tươi) không — để quyết định nâng trust + gửi lại.
+  /// Whether a 403 was caused by trust (below the minimum, or no longer fresh), which decides
+  /// whether to raise trust and resend.
   static bool _isTrustRejected(Uint8List bytes) {
     final body = utf8.decode(bytes, allowMalformed: true);
     return body.contains('CSHIELD_DEVICE_NOT_ALLOWED') || body.contains('CSHIELD_TRUST_NOT_FRESH');
   }
 
-  /// Clone request để gửi lại (chỉ http.Request — bodyBytes giữ lại sau send; cs-proof cũ sẽ bị
-  /// ký-lại ghi đè). Loại khác (multipart…) → null = không retry.
+  /// Clones a request so it can be resent. Only an http.Request can be cloned (its bodyBytes
+  /// survive `send`; the old cs-proof is overwritten when the clone is signed). Any other type
+  /// (multipart, …) returns null, meaning no retry.
   http.BaseRequest? _cloneRequest(http.BaseRequest original) {
     if (original is http.Request) {
       final c = http.Request(original.method, original.url)
@@ -196,18 +230,19 @@ class CShieldInterceptor extends http.BaseClient {
     return null;
   }
 
-  /// Nâng trust trước khi ký — BEST-EFFORT cho lỗi tạm thời: KHÔNG chặn request vì server mới chốt
-  /// trust.
+  /// Raises trust in the background. Best effort: it never blocks or fails the request, because
+  /// the server is what enforces trust, and it swallows every error.
   ///
-  /// NGOẠI LỆ: `playIntegrityNotConfigured` là lỗi SAI CẤU HÌNH (đặt `requiredLevel` nhưng
-  /// `initialize` không truyền `cloudProjectNumber` ⇒ PI tắt) → **ném lại** để bên tích hợp sửa.
+  /// A configuration error (`playIntegrityNotConfigured`: `requiredLevel` is set but `initialize`
+  /// got no `cloudProjectNumber`, so Play Integrity is off) is not lost: it is surfaced by the
+  /// 403 retry path in [send], where `ensureTrust(requireFresh: true)` throws and is rethrown.
   static Future<void> _ensureTrustBestEffort(TrustLevel? level) async {
     if (level == null || level == TrustLevel.unknown) return;
     try {
       await CShieldAttest.ensureTrust(level, timeoutMs: _ensureTrustTimeoutMs);
     } catch (_) {
-      // Chạy nền (fire-and-forget): nuốt mọi lỗi. Sai cấu hình (playIntegrityNotConfigured) sẽ được
-      // surface ở nhánh retry 403 (ensureTrust(requireFresh) ném → rethrow cho app).
+      // Fire-and-forget: swallow everything so no unhandled async error escapes. A configuration
+      // error is surfaced by the 403 retry path instead (see the doc comment above).
     }
   }
 
@@ -219,10 +254,10 @@ class CShieldInterceptor extends http.BaseClient {
   /// Returns the bytes to sign and the content type to report to the normalizer.
   static (Uint8List, String) _bodyAndContentType(http.BaseRequest request) {
     if (request is http.MultipartRequest) {
-      // Mirror native: only text fields are signed (files skipped), sorted and
-      // JSON-encoded. Report application/json so the payload hash matches the
-      // multipart text fields the server extracts. The original multipart
-      // request (with files) is still sent on the wire unchanged.
+      // Same as the native SDKs: only text fields are signed (files skipped),
+      // sorted and JSON-encoded. Report application/json so the payload hash
+      // matches the multipart text fields the server extracts. The original
+      // multipart request (with files) is still sent on the wire unchanged.
       return (AIPNormalizer.normalizeFields(request.fields), 'application/json');
     }
     if (request is http.Request) {
@@ -237,8 +272,8 @@ class CShieldInterceptor extends http.BaseClient {
   }
 }
 
-/// Kết quả một lượt ký+gửi+verify: response đã dựng lại + cờ đáng retry (401 invalid-token /
-/// 403 trust).
+/// Result of one sign + send + verify attempt: the rebuilt response plus the flags that say
+/// whether it is worth a retry (401 invalid token / trust 403).
 class _Attempt {
   final http.StreamedResponse response;
   final bool retryableInvalidToken;

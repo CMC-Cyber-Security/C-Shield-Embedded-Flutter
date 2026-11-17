@@ -3,12 +3,12 @@ import CShieldEmbedded
 
 /// Mirrors AipBridge.kt (android) — keep both in sync.
 ///
-/// Chỉ phần ký/verify crypto cross sang Flutter; normalize body, dựng payload, băm và check cửa sổ
-/// timestamp response đều làm ở Dart (AIPNormalizer / CShieldAIP). Ký per-request dùng **App Attest**
-/// (khóa Secure Enclave) — fallback RSA v1 đã bỏ (D6).
+/// Only the cryptographic sign/verify is exposed to Flutter. Body normalization, payload
+/// construction, hashing and the response timestamp-window check are all done in Dart
+/// (AIPNormalizer / CShieldAIP). Per-request signing uses **App Attest** (a Secure Enclave key).
 final class AipBridge {
 
-    // CHỈ v2: App Attest assertion. (CompositeRequestSigner/NativeRsaRequestSigner đã bị gỡ.)
+    // Signs with an App Attest assertion.
     private let requestSigner: RequestSigner = AppAttestRequestSigner()
 
     private let bg = DispatchQueue(label: "com.cmc.cshield.flutter.aip", qos: .userInitiated)
@@ -62,8 +62,9 @@ final class AipBridge {
             let ctx = RequestContext(method: method, path: path, canonicalQuery: canonicalQuery,
                                      timestampSec: timestampSec, bodyHashHex: bodyHashHex)
             do {
-                // Ký thử; nil = chưa sẵn sàng (token hết hạn...) → tự làm mới NỀN (an toàn vì đang off-main,
-                // mirror Android HardwareRequestSigner.ensureReady) rồi ký lại MỘT lần.
+                // Try to sign. nil = not ready (expired token, …) → wait for a background refresh
+                // (safe, since this runs off the main thread; mirrors
+                // HardwareRequestSigner.ensureReady on Android), then sign ONCE more.
                 var headers = try self.requestSigner.sign(ctx)
                 if headers == nil {
                     _ = CShield.awaitReady(timeoutMs: 1500)
@@ -73,12 +74,13 @@ final class AipBridge {
                     let map = headers.reduce(into: [String: String]()) { $0[$1.name] = $1.value }
                     DispatchQueue.main.async { result(map) }
                 } else {
-                    // Vẫn chưa sẵn sàng → NOT_READY kèm phân loại (retryable/state) như Android, để Dart
-                    // interceptor biết nên chờ/retry (tạm thời) hay chặn (UNAVAILABLE = vĩnh viễn).
+                    // Still not ready → NOT_READY with its classification (retryable/state), as on
+                    // Android, so the Dart interceptor knows whether to wait and retry (transient)
+                    // or to block (UNAVAILABLE = permanent).
                     let st = CShield.state()
                     DispatchQueue.main.async {
                         result(FlutterError(code: CShieldErrorCode.notReady,
-                                            message: "device attestation chưa sẵn sàng",
+                                            message: "device attestation is not ready",
                                             details: ["retryable": st != .unavailable,
                                                       "state": AttestBridge.stateId(st)]))
                     }

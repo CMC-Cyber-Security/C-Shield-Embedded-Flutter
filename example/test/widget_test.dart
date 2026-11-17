@@ -1,27 +1,24 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
+import 'package:c_shield_embedded/c_shield_embedded.dart';
+import 'package:c_shield_embedded_example/samples/error_handling.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:c_shield_embedded_example/main.dart';
-
 void main() {
-  testWidgets('Verify Platform version', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  test('messageFor covers every error code with a non-empty message', () {
+    for (final code in CShieldErrorCode.values) {
+      expect(messageFor(CShieldException(code, 'detail')), isNotEmpty,
+          reason: code.name);
+    }
+  });
 
-    // Verify that platform version is retrieved.
-    expect(
-      find.byWidgetPredicate(
-        (Widget widget) =>
-            widget is Text && widget.data!.startsWith('Running on:'),
-      ),
-      findsOneWidget,
-    );
+  test(
+      'a retryable notReady asks the user to try again; a permanent one does not',
+      () {
+    const retryable = CShieldException(
+        CShieldErrorCode.notReady, 'starting', null, true, 'INITIALIZING');
+    const permanent = CShieldException(CShieldErrorCode.notReady,
+        'device_blocked', null, false, 'UNAVAILABLE');
+
+    expect(messageFor(retryable), contains('try again'));
+    expect(messageFor(permanent), contains('device_blocked'));
   });
 }

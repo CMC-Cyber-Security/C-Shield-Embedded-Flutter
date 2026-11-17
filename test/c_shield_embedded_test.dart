@@ -146,6 +146,30 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
     // TODO: implement attestEnsureTrust
     throw UnimplementedError();
   }
+
+  @override
+  Future<void> antiKeyloggerConfigure({bool trustSystemKeyboards = true, List<String> trustedKeyboardPackages = const [], List<String> trustedAccessibilityPackages = const []}) {
+    // TODO: implement antiKeyloggerConfigure
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> antiKeyloggerRunCheck() {
+    // TODO: implement antiKeyloggerRunCheck
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> btgProtect({int? riskThreshold, bool blockWhenDetected = false, bool includeAccessibilitySignal = false}) {
+    // TODO: implement btgProtect
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> btgUnprotect() {
+    // TODO: implement btgUnprotect
+    throw UnimplementedError();
+  }
 }
 
 void main() {

@@ -5,32 +5,38 @@ import 'package:c_shield_embedded/src/internal/platform/c_shield_embedded_platfo
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 
-/// Dio [HttpClientAdapter] that performs the HTTPS request for the pinned host
+/// Dio [HttpClientAdapter] that performs the HTTPS requests for pinned hosts
 /// entirely on the **native** side (OkHttp on Android, URLSession on iOS).
 ///
 /// Why: `dart:io` only ever exposes the leaf certificate, so pure-Dart pinning
 /// can only match the leaf. By delegating the transport to native — where the
 /// full certificate chain is available — the SDK matches pins against the whole
-/// chain (leaf / intermediate / root), exactly like the standalone Android and
-/// iOS SDKs. This lets you pin a stable intermediate CA so the app survives leaf
-/// certificate rotation.
+/// chain, exactly like the standalone Android and iOS SDKs. This lets you pin a
+/// stable intermediate CA so the app survives leaf certificate rotation.
 ///
-/// Only requests to the configured [hostname] over HTTPS are routed to native;
-/// every other request is transparently delegated to [_fallback] (a standard
-/// [IOHttpClientAdapter]), so unpinned traffic behaves exactly as before.
+/// Only HTTPS requests to a host that matches one of the configured host
+/// patterns are routed to native; every other request is transparently
+/// delegated to a standard [IOHttpClientAdapter], so unpinned traffic behaves
+/// exactly as before.
 ///
 /// Buffered (non-streaming): the request body is collected in full before the
 /// call and the response body is returned in full. This covers typical REST/JSON
 /// usage. For large uploads/downloads or SSE, use a non-pinned Dio instance.
+/// A Dio `CancelToken` does not cancel the native request.
+///
+/// Obtain an instance with `CShieldSSL.createDioAdapter()`.
 class CShieldNativeHttpAdapter implements HttpClientAdapter {
+  /// Creates an adapter that routes requests matching [hostPatterns] to
+  /// native.
   CShieldNativeHttpAdapter({required Set<String> hostPatterns})
-      // Normalize giống native PinningConfig (lowercase, bỏ dấu chấm cuối) để `API.Example.com`
-      // trong cấu hình vẫn route đúng request tới `api.example.com` sang native.
+      // Normalize like the native PinningConfig (lowercase, no trailing dot), so that
+      // `API.Example.com` in the configuration still routes requests for `api.example.com`
+      // to native.
       : _hostPatterns = hostPatterns.map(_normalize).toSet(),
         _fallback = IOHttpClientAdapter();
 
-  /// R5 — mọi host pattern được pin (exact / `*.` / `**.`). Request khớp BẤT KỲ pattern
-  /// nào (qua HTTPS) sẽ đi native; còn lại delegate [_fallback].
+  /// Every pinned host pattern (exact / `*.` / `**.`). An HTTPS request matching ANY of them
+  /// goes to native; everything else is delegated to [_fallback].
   final Set<String> _hostPatterns;
   final HttpClientAdapter _fallback;
 
@@ -70,7 +76,7 @@ class CShieldNativeHttpAdapter implements HttpClientAdapter {
   @override
   void close({bool force = false}) => _fallback.close(force: force);
 
-  /// Khớp host theo pattern giống PinningConfig (native): exact, `*.one-level`, `**.multi`.
+  /// Lowercases a host and strips trailing dots, like the native `PinningConfig`.
   static String _normalize(String host) {
     var h = host.trim().toLowerCase();
     while (h.endsWith('.')) {
@@ -79,6 +85,8 @@ class CShieldNativeHttpAdapter implements HttpClientAdapter {
     return h;
   }
 
+  /// Matches a host against a pattern the same way the native `PinningConfig` does: exact,
+  /// `*.` (one level), `**.` (any depth).
   static bool _hostMatches(String rawHost, String pattern) {
     final host = _normalize(rawHost);
     if (pattern == host) return true;

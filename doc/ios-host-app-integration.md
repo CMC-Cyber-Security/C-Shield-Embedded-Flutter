@@ -1,4 +1,4 @@
-# C-Shield Embedded Flutter SDK Integration — iOS Host App
+# C-Shield Embedded Flutter SDK Integration - iOS Host App
 
 The `c_shield_embedded` plugin does not bundle the XCFramework. The host app is
 responsible for providing `CShieldEmbedded.xcframework` (Debug/Release variants)
@@ -14,7 +14,7 @@ and `OpenSSL.xcframework`.
 
 ---
 
-## Step 1 — Obtain the files from the CShield team
+## Step 1 - Obtain the files from the CShield team
 
 Obtain all of the following XCFramework files (all 3 are built specifically for
 the customer's private key):
@@ -27,7 +27,7 @@ the customer's private key):
 
 ---
 
-## Step 2 — Organize the `Libs/` folder
+## Step 2 - Organize the `Libs/` folder
 
 Open the Flutter project's `ios` folder in Xcode via
 `<your_app>/ios/Runner.xcworkspace`. Create a `Libs` folder inside `Runner`,
@@ -36,11 +36,11 @@ then create `Debug` and `Release` subfolders inside `Libs`:
 ```
 Runner
 ├── Libs/                                       ← newly created folder
-│   ├── OpenSSL.xcframework                     ← copied from build/
+│   ├── OpenSSL.xcframework                  
 │   ├── Debug/
-│   │   └── CShieldEmbedded.xcframework              ← copy the Debug build here
+│   │   └── CShieldEmbedded.xcframework            
 │   └── Release/
-│       └── CShieldEmbedded.xcframework              ← copy the Release build here
+│       └── CShieldEmbedded.xcframework    
 ├── Flutter/
 ├── Products/
 ├── Pods/
@@ -50,8 +50,8 @@ Runner
 ```
 
 > **Note:** both `CShieldEmbedded.xcframework` files (Debug/Release) share the
-> same name — they're distinguished entirely by the folder they live in
-> (`Libs/Debug/` vs `Libs/Release/`). No renaming is needed, just copy into the
+> same name - they're distinguished entirely by the folder they live in.
+> No renaming is needed, just copy into the
 > right folder.
 
 > **Note:** you must **drag and drop** each `.xcframework` file into the
@@ -63,9 +63,12 @@ Runner
 > If you skip the drag-and-drop step, Xcode won't recognize these frameworks
 > in the project.
 
+> **Note:**  If you want to replace the old `.xcrfamework` file by the new one, delete the old file first
+> then **drag and drop** the new one.
+
 ---
 
-## Step 3 — Update the `Podfile`
+## Step 3 - Update the `Podfile`
 
 Open `ios/Podfile` and add a `post_install` hook to set the Framework Search
 Paths for CShieldEmbedded. This must be set in **two places** to cover both
@@ -76,7 +79,7 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
 
-    # 1. Pod targets — so the c_shield_embedded plugin can compile `import CShieldEmbedded`.
+    # 1. Pod targets - so the c_shield_embedded plugin can compile `import CShieldEmbedded`.
     # Use sdk-conditional paths so the linker picks the correct slice (simulator vs device).
     # DO NOT add both slices to a non-conditional variable: Xcode searches paths in
     # order and will link the wrong ios-arm64 (device binary) when building for the
@@ -85,7 +88,7 @@ post_install do |installer|
       variant = (config.name == 'Debug') ? 'Debug' : 'Release'
 
       # Only add the CShieldEmbedded slice to the CONDITIONAL [sdk=...] variables,
-      # and make sure to PRESERVE the existing conditional value —
+      # and make sure to PRESERVE the existing conditional value -
       # flutter_additional_ios_build_settings already sets the Flutter engine path
       # here. Overwriting it would lose the Flutter path ⇒ "Unable to find module
       # 'Flutter'". DO NOT touch the non-conditional FRAMEWORK_SEARCH_PATHS and DO
@@ -103,7 +106,7 @@ post_install do |installer|
     end
   end
 
-  # 2. Aggregate xcconfig (Pods-Runner.debug/release.xcconfig) — use sdk-conditional
+  # 2. Aggregate xcconfig (Pods-Runner.debug/release.xcconfig) - use sdk-conditional
   # paths so the linker picks the correct xcframework slice (simulator vs device).
   # Don't use non-conditional FRAMEWORK_SEARCH_PATHS, since Xcode searches paths in
   # order and will link the wrong ios-arm64 (device binary) when building for the
@@ -133,11 +136,11 @@ cd ios && pod install
 
 ---
 
-## Step 4 — Configure Xcode (manual, one-time)
+## Step 4 - Configure Xcode (manual)
 
 Open `Runner.xcworkspace` in Xcode.
 
-### 4a. Embed OpenSSL
+### 4a. Embed OpenSSL (required whenever XCFramework files added or changed/replaced)
 
 `Runner target → General → Frameworks, Libraries, and Embedded Content → +`
 
@@ -193,7 +196,7 @@ $(BUILT_PRODUCTS_DIR)/$(FRAMEWORKS_FOLDER_PATH)/CShieldEmbedded.framework
 
 ---
 
-## Final result — folder structure
+## Final result - folder structure
 
 ```
 <your_app>/ios/
@@ -215,28 +218,9 @@ $(BUILT_PRODUCTS_DIR)/$(FRAMEWORKS_FOLDER_PATH)/CShieldEmbedded.framework
 |------|---------------|------------------------|
 | `s.frameworks = 'CShieldEmbedded'` in the plugin's podspec | CocoaPods automatically writes `-framework CShieldEmbedded` into `Pods-Runner.*.xcconfig` → Runner inherits it | Step 6: Other Linker Flags |
 | `post_install` search paths | The compiler and linker can find `CShieldEmbedded.framework` for the right variant | Step 7: Framework Search Paths |
-| Embed OpenSSL (Xcode — Step 4a) | `OpenSSL.xcframework` gets packaged into the app bundle | Step 5: Embed & Sign |
-| Run Script "Embed CShieldEmbedded" (Xcode — Step 4c) | Copies the right variant (Debug/Release) into the app bundle at build time | Step 9: Run Script Phase |
-| Disable User Script Sandboxing (Xcode — Step 4b) | Allows the Run Script to access files outside the sandbox | Step 8: User Script Sandboxing |
-
----
-
-## Differences from `c_shield_sdk` (cshieldflutter)
-
-`c_shield_embedded` is a focused build — AIP + SSL pinning only, no RASP:
-
-- No `RaspBridge`, no `c_shield_embedded/rasp_events` or
-  `c_shield_embedded/threat_events` EventChannel.
-- `sdk.initialize` doesn't accept `loadAppThreatReaction`/`loadAppThreatPopup`.
-- `CShieldErrorCode` has only 6 codes: `aip_invalid_signature`,
-  `aip_signing_failed`, `ssl_not_configured`, `ssl_pin_mismatch`,
-  `invalid_argument`, `native_error` — it does not include
-  `aip_missing_header`, `aip_timestamp_expired`, or `aip_proxy_ca` (those
-  codes are only used by advanced AIP flows not present in this SDK).
-
-The CocoaPods infrastructure (Podfile, Libs/, Run Script) is set up
-**identically** to the instructions above — only the pod name changes, from
-`c_shield_sdk` to `c_shield_embedded`.
+| Embed OpenSSL (Xcode - Step 4a) | `OpenSSL.xcframework` gets packaged into the app bundle | Step 5: Embed & Sign |
+| Run Script "Embed CShieldEmbedded" (Xcode - Step 4c) | Copies the right variant (Debug/Release) into the app bundle at build time | Step 9: Run Script Phase |
+| Disable User Script Sandboxing (Xcode - Step 4b) | Allows the Run Script to access files outside the sandbox | Step 8: User Script Sandboxing |
 
 ---
 
@@ -255,8 +239,8 @@ Error (Xcode): Linker command failed with exit code 1
 **Cause**: When `FRAMEWORK_SEARCH_PATHS` contains both slice paths without a
 condition, Xcode searches for `CShieldEmbedded.framework` in list order. If
 `ios-arm64` (the device binary) comes before
-`ios-arm64_x86_64-simulator`, Xcode links the wrong binary — the one built for
-device — even when building for the simulator, bypassing the xcframework's
+`ios-arm64_x86_64-simulator`, Xcode links the wrong binary - the one built for
+device - even when building for the simulator, bypassing the xcframework's
 slice-selection mechanism entirely.
 
 **Fix**: Use the xcconfig conditional syntax `[sdk=...]` in the aggregate
@@ -296,7 +280,7 @@ And replace `${CONFIGURATION}` with `${LIB_CONFIG}` in the `SRC=...` line.
 
 **Cause**: Xcode 16 (some beta/RC versions) saves the project with
 `objectVersion = 74`. The xcodeproj gem (used by CocoaPods 1.16.x) only knows
-about `60` (Xcode 15.0), `63` (Xcode 15.3), and `77` (Xcode 16.0 final) — it
+about `60` (Xcode 15.0), `63` (Xcode 15.3), and `77` (Xcode 16.0 final) - it
 doesn't recognize `74`.
 
 **Fix**: Open `ios/Runner.xcodeproj/project.pbxproj`, find the line near the
@@ -314,7 +298,7 @@ objectVersion = 77;
 
 ### `pod install` prints a warning: `Xcodeproj doesn't know about the following attributes {"attributesByRelativePath" => ...} for the 'PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet'`
 
-**This is a harmless warning** — it does not cause `pod install` to fail.
+**This is a harmless warning** - it does not cause `pod install` to fail.
 
 **Explanation**: When performing Step 4a (adding `OpenSSL.xcframework` with
 "Embed & Sign" in the Xcode UI), Xcode automatically creates a
@@ -326,5 +310,5 @@ xcodeproj gem knows about this ISA type but not yet about the
 `attributesByRelativePath` attribute inside it, hence the warning.
 
 `pod install` **does not overwrite** `Runner/project.pbxproj`, so the
-attribute is preserved — OpenSSL is still embedded correctly with
+attribute is preserved - OpenSSL is still embedded correctly with
 `CodeSignOnCopy` + `RemoveHeadersOnCopy` when building in Xcode.

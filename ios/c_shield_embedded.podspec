@@ -4,10 +4,10 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'c_shield_embedded'
-  s.version          = '0.0.1'
+  s.version          = '1.0.4'
   s.summary          = 'CShield Embedded Flutter SDK plugin for iOS'
-  s.description      = 'Flutter plugin wrapping the CShieldEmbedded XCFramework (SSL pinning, AIP).'
-  s.homepage         = 'http://example.com'
+  s.description      = 'Flutter plugin wrapping the CShieldEmbedded XCFramework (AIP request signing, device attestation, SSL pinning, anti-keylogger).'
+  s.homepage         = 'https://github.com/CMC-Cyber-Security/C-Shield-Embedded-Flutter'
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'CMCCS' => 'email@example.com' }
   s.source           = { :path => '.' }
@@ -15,9 +15,11 @@ Pod::Spec.new do |s|
   s.dependency 'Flutter'
   s.platform = :ios, '13.0'
 
-  # CShieldEmbedded không được bundle trong plugin — host app cung cấp via Libs/Debug|Release/.
-  # Khai báo framework để CocoaPods thêm -framework CShieldEmbedded vào OTHER_LDFLAGS.
-  # FRAMEWORK_SEARCH_PATHS (variant-specific) phải được set trong Podfile của host app.
+  # CShieldEmbedded is not bundled in the plugin: the host app provides it under
+  # Libs/Debug|Release/. Declaring the framework makes CocoaPods add
+  # `-framework CShieldEmbedded` to OTHER_LDFLAGS. The variant-specific
+  # FRAMEWORK_SEARCH_PATHS must be set in the host app's Podfile
+  # (see doc/ios-host-app-integration.md).
   s.frameworks = 'CShieldEmbedded'
 
   s.pod_target_xcconfig = {

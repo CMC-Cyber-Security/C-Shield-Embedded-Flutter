@@ -5,8 +5,9 @@ import Foundation
 /// Mirrors SslBridge.kt (android) — keep both in sync.
 final class SslBridge {
 
-    /// URLSession dùng chung cho `ssl.httpRequest`: delegate là `CShieldTrustManager` DUY NHẤT của
-    /// native (multi-host), nên một session phục vụ mọi host pin và giữ được connection reuse.
+    /// The URLSession shared by all `ssl.httpRequest` calls. Its delegate is the native SDK's
+    /// SINGLE `CShieldTrustManager` (multi-host), so one session serves every pinned host and
+    /// connections are reused.
     private lazy var pinnedSession: URLSession = CShieldSSL.urlSession()
 
     func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -24,9 +25,9 @@ final class SslBridge {
     // MARK: - ssl.configure / ssl.updatePins (mirror SslBridge.kt)
 
     private func handleConfigure(args: [String: Any], result: @escaping FlutterResult) {
-        // R5 — multi-host: ưu tiên map `pinsByHost` (host pattern → pins); tương thích đường cũ
-        // `pins`+`hostname` bằng cách gói thành map 1 phần tử. Native iOS giờ multi-host thật
-        // (exact / `*.` / `**.`) — trước đây chỉ giữ 1 host.
+        // Multi-host: prefer the `pinsByHost` map (host pattern → pins). The legacy arguments
+        // (`pins` + `hostname`) stay supported by wrapping them into a one-entry map. The native
+        // iOS SDK supports real multi-host pinning (exact / `*.` / `**.`).
         var pinsByHost: [String: [String]] = [:]
         if let raw = args["pinsByHost"] as? [String: Any] {
             for (host, value) in raw {
@@ -39,7 +40,8 @@ final class SslBridge {
         }
         guard !pinsByHost.isEmpty else { result(invalidArg("pinsByHost (or pins+hostname) required")); return }
 
-        // H-3 — mặc định auto-seal; app truyền allowRuntimeUpdates=true nếu cần rotate runtime.
+        // Sealed by default; the app passes allowRuntimeUpdates = true if it needs to rotate pins
+        // at runtime.
         let allowRuntimeUpdates = args["allowRuntimeUpdates"] as? Bool ?? false
         do {
             try CShieldSSL.configure(pinsByHost: pinsByHost, allowRuntimeUpdates: allowRuntimeUpdates)
@@ -53,7 +55,8 @@ final class SslBridge {
         guard let pins = args["pins"] as? [String] else { result(invalidArg("pins required")); return }
         guard let hostname = args["hostname"] as? String else { result(invalidArg("hostname required")); return }
         do {
-            // Merge vào cấu hình hiện tại (giống Android addPins). Chỉ chạy khi allowRuntimeUpdates=true.
+            // Merged into the current configuration (like addPins on Android). Only works when
+            // configured with allowRuntimeUpdates = true.
             try CShieldSSL.updatePins(pins: pins, hostname: hostname)
             result(nil)
         } catch {
@@ -61,7 +64,8 @@ final class SslBridge {
         }
     }
 
-    /// Khớp mapping của SslBridge.kt: đã seal → `ssl_not_configured`; sai format → `invalid_argument`.
+    /// Same mapping as SslBridge.kt: sealed → `ssl_not_configured`; malformed host or pin →
+    /// `invalid_argument`.
     private func mapConfigError(_ error: Error) -> FlutterError {
         switch error as? CShieldSSLError {
         case .sealed?:
@@ -149,10 +153,12 @@ final class SslBridge {
 
     // MARK: - ssl.checkServerTrusted
 
-    /// Kiểm tra một leaf certificate (DER base64) cho `host` bằng `CShieldSSL.verifyPin` của native —
-    /// cùng logic với Android `CShieldSSL.verifyPin`: pin của ĐÚNG host (multi-host); chuỗi đủ → system CA,
-    /// chỉ có leaf → kiểm tra cấu trúc (hạn dùng + hostname) + so pin leaf. Chạy off-main vì SecTrust có
-    /// thể chạm mạng (tải intermediate).
+    /// Verifies a single leaf certificate (base64 DER) for `host` with the native
+    /// `CShieldSSL.verifyPin`, using the same logic as `CShieldSSL.verifyPin` on Android: the pins
+    /// of THIS host (multi-host); with a full chain it also runs system CA validation, with only a
+    /// leaf it checks the certificate structure (validity period + hostname) and compares the leaf
+    /// pin. Runs off the main thread because SecTrust may touch the network (to fetch
+    /// intermediates).
     private func handleCheckServerTrusted(args: [String: Any], result: @escaping FlutterResult) {
         guard let certDerBase64 = args["certDer"] as? String,
               let certData = Data(base64Encoded: certDerBase64, options: .ignoreUnknownCharacters),

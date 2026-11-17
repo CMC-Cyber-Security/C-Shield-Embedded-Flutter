@@ -1,17 +1,23 @@
-/// Kết quả của [CShieldAttest.ensureTrust] (khớp native `EnsureTrustResult.kt`) — bên tích hợp đọc
-/// để quyết định cho đi tiếp luồng nhạy hay chặn/hạ cấp.
+/// Result of `CShieldAttest.ensureTrust` (mirrors the native
+/// `EnsureTrustResult`). The app reads it to decide whether to let a sensitive
+/// flow continue, block it, or offer a reduced feature.
 ///
-///  - [satisfied]: đã đạt mức trust yêu cầu (và tươi nếu `requireFresh`). Cho đi tiếp.
-///  - [insufficient]: đã thử nâng nhưng thiết bị không đạt (vd máy chỉ software / không GMS → Play
-///    Integrity không lên nổi L4). Bên tích hợp tự quyết chặn hay hạ cấp tính năng.
-///  - [rateLimited]: Play Integrity bị giới hạn tần suất/quota — tạm thời, thử lại sau. Trust hiện
-///    tại KHÔNG bị hạ.
-///  - [timeout]: quá `timeoutMs` / lỗi mạng tạm (5xx, timeout) trước khi nâng xong — tạm thời, thử lại sau.
-///  - [offline]: mất kết nối internet khi cần gọi server attest (register/refresh). KHÁC
-///    [insufficient] — đây KHÔNG phải "thiết bị chưa đủ an toàn"; nên báo "kiểm tra kết nối" và cho
-///    thử lại thay vì chặn thiết bị.
-///  - [unavailable]: attestation không khả dụng vĩnh viễn (chưa init / thiếu license / thiết bị
-///    hoặc nền tảng không hỗ trợ) — đừng retry.
+///  - [satisfied]: the requested trust level is reached, and is fresh if
+///    `requireFresh` was set. Continue.
+///  - [insufficient]: the SDK tried to raise trust but the device cannot reach
+///    the level (for example a software-only device, or one without Google
+///    Play services, cannot reach L4). The app decides whether to block or
+///    degrade.
+///  - [rateLimited]: Play Integrity hit a rate limit or quota. Transient: retry
+///    later. The current trust level is **not** lowered.
+///  - [timeout]: `timeoutMs` elapsed, or a transient server error (5xx,
+///    timeout) happened before trust was raised. Transient: retry later.
+///  - [offline]: no internet connection when the attestation server had to be
+///    reached. Unlike [insufficient], this says nothing about the device's
+///    security: ask the user to check the connection and retry instead of
+///    blocking the device.
+///  - [unavailable]: attestation is permanently unavailable (not initialized,
+///    missing license, or an unsupported device or platform). Do not retry.
 enum EnsureTrustResult {
   satisfied('SATISFIED'),
   insufficient('INSUFFICIENT'),
@@ -22,10 +28,11 @@ enum EnsureTrustResult {
 
   const EnsureTrustResult(this.id);
 
-  /// Tên cross method-channel (khớp `EnsureTrustResult.name` phía native).
+  /// The name used across the method channel (matches the native enum name).
   final String id;
 
-  /// Map tên native → [EnsureTrustResult]; không khớp → [unavailable] (fail-closed).
+  /// Maps a native name to an [EnsureTrustResult]. Anything unrecognized maps
+  /// to [unavailable] (fail-closed).
   static EnsureTrustResult fromId(String? value) {
     final v = (value ?? '').trim().toUpperCase();
     return values.firstWhere((e) => e.id == v, orElse: () => unavailable);

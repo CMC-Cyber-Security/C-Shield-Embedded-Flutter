@@ -1,16 +1,24 @@
-/// Mức độ tin cậy thiết bị (thang L0–L5, khớp native `TrustLevel.kt` + BE `trust_level.go`) mà bên
-/// tích hợp dùng với [CShieldAttest.ensureTrust] / [CShieldAttest.currentTrustLevel].
+/// Device trust level on the L0–L5 scale (mirrors the native and backend
+/// `TrustLevel`), used with `CShieldAttest.ensureTrust` and
+/// `CShieldAttest.currentTrustLevel`.
 ///
-///  - L0 UNTRUSTED · L1 WEAK · L2 BASIC · L3 PARTIAL (một trụ mạnh, trụ kia chưa rõ — vd TEE +
-///    Play Integrity chưa có) · L4 HARDWARE (TEE + PI đạt) · L5 STRONG (StrongBox + PI mạnh).
-///  - [unknown]: chưa có token / chưa đăng ký → coi như thấp nhất khi so [atLeast].
+///  - [l0] UNTRUSTED
+///  - [l1] WEAK
+///  - [l2] BASIC
+///  - [l3] PARTIAL: one strong pillar, the other unknown (for example a TEE
+///    key with Play Integrity not run yet)
+///  - [l4] HARDWARE: TEE plus a passing Play Integrity verdict
+///  - [l5] STRONG: StrongBox plus a strong Play Integrity verdict
+///  - [unknown]: no token yet, or not registered. Ranks lowest in [atLeast].
 ///
-/// ⚠️ Giá trị này đọc từ access token thiết bị đang giữ, **chỉ để điều hướng phía client** (quyết
-/// định có cần nâng trust trước khi gọi API nhạy). Chốt bảo mật vẫn ở SERVER (verify token + ngưỡng
-/// trust theo route). Client không thể giả mạo mức cao hơn vì token do BE ký.
+/// The value is read from the access token the device holds and is meant for
+/// **client-side routing only** (deciding whether to raise trust before a
+/// sensitive call). The **server** enforces security, by verifying the token
+/// and applying a minimum trust level per route. A client cannot forge a
+/// higher level, because the token is signed by the backend.
 ///
-/// ⚠️ iOS tối đa **L4** (Secure Enclave ánh xạ vào hàng "TEE", không có StrongBox) — đặt ngưỡng
-/// [l5] sẽ chặn sạch iOS.
+/// iOS reaches **L4** at most: the Secure Enclave maps to the "TEE" row and
+/// there is no StrongBox. A minimum of [l5] therefore blocks every iOS device.
 enum TrustLevel {
   unknown(-1, 'UNKNOWN'),
   l0(0, 'L0'),
@@ -22,17 +30,17 @@ enum TrustLevel {
 
   const TrustLevel(this.rank, this.id);
 
-  /// Thứ hạng để so sánh ngưỡng ([unknown] = -1, luôn nhỏ hơn mọi mức hợp lệ).
+  /// Rank used to compare levels ([unknown] is -1, below every real level).
   final int rank;
 
-  /// Tên cross method-channel (khớp `TrustLevel.name` phía native).
+  /// The name used across the method channel (matches the native enum name).
   final String id;
 
-  /// `true` nếu mức này ≥ [other] theo thang L0–L5.
+  /// `true` if this level is at or above [other] on the L0–L5 scale.
   bool atLeast(TrustLevel other) => rank >= other.rank;
 
-  /// Map tên native ("L0".."L5"/"UNKNOWN", không phân biệt hoa thường) → [TrustLevel];
-  /// rỗng/không khớp → [unknown].
+  /// Maps a native name (`"L0"`..`"L5"` or `"UNKNOWN"`, case-insensitive) to a
+  /// [TrustLevel]. Empty or unrecognized input maps to [unknown].
   static TrustLevel fromId(String? value) {
     final v = (value ?? '').trim().toUpperCase();
     return values.firstWhere((e) => e.id == v, orElse: () => unknown);

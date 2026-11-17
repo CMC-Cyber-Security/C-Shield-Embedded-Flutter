@@ -20,6 +20,12 @@ import java.util.concurrent.TimeUnit
 import kotlin.collections.component1
 import kotlin.collections.component2
 
+/**
+ * Adapts the native certificate-pinning API ([CShieldSSL]) to the Flutter plugin: pin
+ * configuration, single-certificate verification, and pinned HTTPS requests performed natively.
+ *
+ * Mirrored by SslBridge.swift (iOS) — keep both in sync.
+ */
 class SslBridge {
 
     // Network I/O must not run on the platform (main) thread; results are posted
@@ -27,7 +33,8 @@ class SslBridge {
     private val executor = Executors.newCachedThreadPool()
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Client gốc chỉ để chia sẻ ConnectionPool/Dispatcher; mọi request tạo bằng newBuilder().
+    // Base client that exists only to share its ConnectionPool/Dispatcher; every request builds
+    // its own client from it with newBuilder().
     private val baseClient: OkHttpClient by lazy { OkHttpClient() }
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
@@ -42,8 +49,8 @@ class SslBridge {
     }
 
     private fun handleConfigure(call: MethodCall, result: MethodChannel.Result) {
-        // R5 — multi-host: ưu tiên map pinsByHost (host -> pins). Giữ tương thích đường cũ
-        // (pins + hostname) bằng cách gói thành map 1 phần tử.
+        // Multi-host: prefer the pinsByHost map (host pattern -> pins). The legacy arguments
+        // (pins + hostname) stay supported by wrapping them into a one-entry map.
         val pinsByHost: Map<String, List<String>> = run {
             val map = call.argument<Map<String, List<String>>>("pinsByHost")
             if (map != null && map.isNotEmpty()) return@run map
@@ -54,16 +61,19 @@ class SslBridge {
         if (pinsByHost.isEmpty()) {
             return result.error(CShieldErrorCode.INVALID_ARGUMENT, "pinsByHost (or pins+hostname) required", null)
         }
-        // H-3 — mặc định auto-seal; app truyền allowRuntimeUpdates=true nếu cần rotate runtime.
+        // Sealed by default; the app passes allowRuntimeUpdates = true if it needs to rotate pins
+        // at runtime.
         val allowRuntimeUpdates = call.argument<Boolean>("allowRuntimeUpdates") ?: false
         try {
             CShieldSSL.configure(pinsByHost = pinsByHost, allowRuntimeUpdates = allowRuntimeUpdates)
             result.success(null)
         } catch (e: IllegalStateException) {
-            // Đã seal (configure trước đó ở chế độ auto-seal) → cấu hình pin bị khoá.
+            // Already sealed (an earlier configure ran in the default sealing mode) → the pin
+            // configuration is locked.
             result.error(CShieldErrorCode.SSL_NOT_CONFIGURED, e.message, null)
         } catch (e: IllegalArgumentException) {
-            // Host/pin sai format (PinningConfig validate) — cùng mã với iOS (CShieldSSLError.invalidConfiguration).
+            // Malformed host or pin (rejected by PinningConfig) — same code as on iOS
+            // (CShieldSSLError.invalidConfiguration).
             result.error(CShieldErrorCode.INVALID_ARGUMENT, e.message, null)
         } catch (e: Throwable) {
             result.error(CShieldErrorCode.NATIVE_ERROR, e.message, null)
@@ -79,7 +89,8 @@ class SslBridge {
             CShieldSSL.updatePins(pins = pins, hostname = hostname)
             result.success(null)
         } catch (e: IllegalStateException) {
-            // H-3 — pinning đã auto-seal: updatePins chỉ chạy nếu configure(allowRuntimeUpdates=true).
+            // The pin set is sealed: updatePins only works after
+            // configure(allowRuntimeUpdates = true).
             result.error(CShieldErrorCode.SSL_NOT_CONFIGURED, e.message, null)
         } catch (e: IllegalArgumentException) {
             result.error(CShieldErrorCode.INVALID_ARGUMENT, e.message, null)
@@ -89,10 +100,10 @@ class SslBridge {
     }
 
     /**
-     * Verifies a DER-encoded certificate (base64) using [CShieldSSL.getTrustManager],
-     * which performs system CA validation + SPKI pin check.
+     * Verifies a single DER-encoded certificate (base64) for `host` with [CShieldSSL.verifyPin].
      *
-     * Flutter equivalent of CShieldTrustManager.checkServerTrusted() on Android.
+     * Dart can only pass the leaf certificate, so this is a leaf-only check; see the comment at
+     * the call below. A certificate that cannot be parsed yields `false` rather than an error.
      */
     private fun handleCheckServerTrusted(call: MethodCall, result: MethodChannel.Result) {
         val certDerBase64 = call.argument<String>("certDer")
@@ -108,10 +119,13 @@ class SslBridge {
             val factory = CertificateFactory.getInstance("X.509")
             val cert = factory.generateCertificate(ByteArrayInputStream(certBytes)) as X509Certificate
 
-            // CShieldSSL.verifyPin(host, chain): pin của ĐÚNG host (multi-host) + system CA khi chuỗi đủ,
-            // hoặc kiểm tra cấu trúc (hạn dùng + hostname) khi chỉ có leaf (dart:io chỉ đưa leaf).
-            // Trước đây gọi getTrustManager().checkServerTrusted(chain, "RSA") — bản KHÔNG host ⇒
-            // strictUnknownHost luôn fail ⇒ verifyPin luôn false + onPinFailure báo MITM giả.
+            // CShieldSSL.verifyPin(host, chain) uses the pins of THIS host (multi-host). With a
+            // full chain it also runs system CA validation; with only a leaf (all that dart:io
+            // provides) it checks the certificate structure (validity period + hostname) and
+            // compares the leaf pin.
+            // Do not use getTrustManager().checkServerTrusted(chain, "RSA") here: that overload
+            // has no host, so with strict unknown-host handling it always fails, and verifyPin
+            // would always return false and report a false MITM through onPinFailure.
             result.success(CShieldSSL.verifyPin(host, listOf(cert)))
         } catch (e: CertificateException) {
             result.success(false)
@@ -145,17 +159,20 @@ class SslBridge {
 
         executor.execute {
             try {
-                // newBuilder() từ client gốc ⇒ dùng CHUNG ConnectionPool/Dispatcher: giữ keep-alive +
-                // TLS session giữa các request (trước đây mỗi request một OkHttpClient mới ⇒ handshake lại).
+                // newBuilder() on the base client ⇒ SHARES its ConnectionPool/Dispatcher, which
+                // keeps connections alive and reuses TLS sessions across requests (a fresh
+                // OkHttpClient per request would handshake every time).
                 val builder = baseClient.newBuilder()
                     .sslSocketFactory(CShieldSSL.getSSLSocketFactory(), CShieldSSL.getTrustManager())
                     .followRedirects(followRedirects)
                     .followSslRedirects(followRedirects)
-                    // FIX B — re-verify SPKI pin Ở NATIVE (độc lập CShieldTrustManager Java).
-                    // Chạy sau handshake, TRƯỚC khi gửi request: nếu attacker hook/thay
-                    // TrustManager Java để bỏ pin thì bước native này vẫn chặn MITM.
-                    // R4 — FAIL-CLOSED: verifyChainNative trả false cho host đã-pin khi native
-                    // chưa nhận pins / JNI lỗi (không còn fail-open). Host KHÔNG pin mới pass.
+                    // Re-verify the SPKI pin IN NATIVE CODE, independently of the Java
+                    // CShieldTrustManager. It runs after the handshake and BEFORE the request is
+                    // sent: if an attacker hooks or replaces the Java TrustManager to skip
+                    // pinning, this native step still blocks the MITM.
+                    // FAIL-CLOSED: verifyChainNative returns false for a pinned host when the
+                    // native side has not received the pins or the JNI call fails. Only a host
+                    // that is NOT pinned passes.
                     .addNetworkInterceptor { chain ->
                         val h = chain.request().url.host
                         val ders = (chain.connection()?.handshake()?.peerCertificates ?: emptyList())

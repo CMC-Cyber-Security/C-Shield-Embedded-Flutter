@@ -1,10 +1,16 @@
 import 'package:c_shield_embedded/src/api/attest/c_shield_state.dart';
 import 'package:c_shield_embedded/src/api/attest/trust_level.dart';
 
-/// Listen via [CShieldEmbedded.events].
+/// Base type of every event the native SDK pushes to Dart. Listen via
+/// `CShieldEmbedded.events`.
+///
+/// The class is sealed, so a `switch` over an event is checked for
+/// exhaustiveness by the compiler.
 sealed class CShieldEvent {
   const CShieldEvent();
 
+  /// Decodes an event map received over the event channel. Throws an
+  /// [ArgumentError] for an unknown event name.
   factory CShieldEvent.fromMap(Map<Object?, Object?> map) {
     final event = map['event'];
     switch (event) {
@@ -60,18 +66,22 @@ class LicenseRevoked extends CShieldEvent {
   const LicenseRevoked();
 }
 
-/// Trạng thái attestation vừa đổi (register/refresh nền chạy xong, trust được nâng, hoặc đăng ký bị
-/// từ chối vĩnh viễn). Native phát NGAY sự kiện đầu tiên với trạng thái hiện tại lúc đăng ký.
+/// The attestation state changed: background registration or refresh finished,
+/// trust was raised, or registration was rejected permanently. The native side
+/// emits the current state as the first event, as soon as it has a listener.
 ///
-/// Lắng nghe qua [CShieldAttest.stateChanges] (đã lọc sẵn) hoặc [CShieldEmbedded.events].
+/// Listen via `CShieldAttest.stateChanges` (already filtered to this type) or
+/// `CShieldEmbedded.events`.
 class AttestStateChanged extends CShieldEvent {
-  /// Trạng thái sẵn sàng mới.
+  /// The new readiness state.
   final CShieldState state;
 
-  /// Mức trust tại thời điểm đổi trạng thái (đọc từ access token đang giữ).
+  /// The trust level at the time of the change, read from the access token the
+  /// device holds.
   final TrustLevel trustLevel;
 
-  /// Mã lỗi ổn định gần nhất (xem [CShieldAttest.lastError]); `null` nếu chưa có lỗi.
+  /// The latest stable error code (see `CShieldAttest.lastError`), or `null` if
+  /// there has been no error.
   final String? lastError;
 
   const AttestStateChanged({required this.state, required this.trustLevel, this.lastError});
@@ -80,7 +90,7 @@ class AttestStateChanged extends CShieldEvent {
   String toString() => 'AttestStateChanged(state: ${state.id}, trustLevel: ${trustLevel.id}, lastError: $lastError)';
 }
 
-/// A protected screen (see [CShieldAntiOverlay]) received a touch while another
+/// A protected screen (see `CShieldAntiOverlay`) received a touch while another
 /// window was drawn on top of it — the signature of an overlay/tapjacking attempt.
 class OverlayDetected extends CShieldEvent {
   /// Another window completely covers the touched view (strongest signal).
@@ -97,7 +107,7 @@ class OverlayCleared extends CShieldEvent {
   const OverlayCleared();
 }
 
-/// A protected screen (see [CShieldBehavioralTouchGuard]) received input that
+/// A protected screen (see `CShieldBehavioralTouchGuard`) received input that
 /// looks machine-generated (auto-clicker, ADB `input tap`, injected event).
 class SuspiciousTouchDetected extends CShieldEvent {
   /// Confidence that the input is synthetic, 0..100.
@@ -114,17 +124,21 @@ class SuspiciousTouchDetected extends CShieldEvent {
 class TouchGuardCleared extends CShieldEvent {
   const TouchGuardCleared();
 }
+
 /// The device's active keyboard (IME) is neither a system keyboard nor on the
 /// trusted allowlist — a third-party IME can read everything the user types.
 ///
 /// Named *Detected*, not *Blocked* (cf. iOS, which can refuse a keyboard
 /// extension): Android cannot block the system keyboard the user chose, so the
-/// guard only reports. See [CShieldAntiKeylogger].
+/// guard only reports. See `CShieldAntiKeylogger`.
+///
+/// Emitted on both platforms. iOS does not expose the keyboard's identity, so
+/// [inputMethodId] and [packageName] are empty there.
 class ThirdPartyKeyboardDetected extends CShieldEvent {
-  /// Raw IME component id (`pkg/.ServiceName`).
+  /// Raw IME component id (`pkg/.ServiceName`). Empty on iOS.
   final String inputMethodId;
 
-  /// The IME's package.
+  /// The IME's package. Empty on iOS.
   final String packageName;
 
   /// The IME's display label, or [packageName] if it could not be resolved.
