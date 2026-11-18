@@ -4,9 +4,9 @@ import CShieldEmbedded
 /// Mirrors AntiKeyloggerBridge.kt (android) — keep both in sync.
 ///
 /// iOS exposes the anti-keylogger via the native `CShieldCaptureDetector`, which
-/// blocks third-party keyboard extensions and reports them. This bridge wires that
-/// detection to Dart over the shared event channel as `onThirdPartyKeyboardDetected`
-/// (the iOS analog of the Android `ThirdPartyKeyboardDetected` event).
+/// blocks third-party keyboard extensions and reports them. The plugin routes that
+/// detection here and this bridge sends it to Dart over the shared event channel as
+/// `onThirdPartyKeyboardDetected` (the iOS analog of the Android event).
 ///
 /// Unlike Android, iOS has no keyboard allowlist to configure and no on-demand
 /// re-check — the guard is event-driven — so `configure` / `runCheck` are accepted
@@ -19,26 +19,16 @@ final class AntiKeyloggerBridge {
         self.eventSink = eventSink
     }
 
-    /// Routes native keyboard detections to Dart. Call once (before SDK init).
-    func wireDetection() {
-        CShieldCaptureDetector.onDetection = { [weak self] event in
-            switch event {
-            case .thirdPartyKeyboardBlocked:
-                // EventSink must be invoked on the main thread.
-                DispatchQueue.main.async {
-                    self?.eventSink()?([
-                        "event": "onThirdPartyKeyboardDetected",
-                        // iOS does not expose the keyboard extension's identity.
-                        "inputMethodId": "",
-                        "packageName": "",
-                        "label": "Third-party Keyboard",
-                    ])
-                }
-            case .screenCaptureDetected:
-                break // not part of the anti-keylogger feature
-            @unknown default:
-                break
-            }
+    /// Sends `onThirdPartyKeyboardDetected` to Dart on the main thread.
+    /// iOS does not expose the keyboard extension's identity, so the ids are empty.
+    func emitThirdPartyKeyboard() {
+        DispatchQueue.main.async { [weak self] in
+            self?.eventSink()?([
+                "event": "onThirdPartyKeyboardDetected",
+                "inputMethodId": "",
+                "packageName": "",
+                "label": "Third-party Keyboard",
+            ])
         }
     }
 

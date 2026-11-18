@@ -48,6 +48,8 @@ sealed class CShieldEvent {
         return SuspiciousAccessibilityServiceDetected(
           packageNames: (map['packageNames'] as List?)?.cast<String>() ?? const <String>[],
         );
+      case 'onScreenCaptureDetected':
+        return const ScreenCaptureDetected();
       default:
         throw ArgumentError('Unknown CShield event: $event');
     }
@@ -159,4 +161,10 @@ class SuspiciousAccessibilityServiceDetected extends CShieldEvent {
   final List<String> packageNames;
 
   const SuspiciousAccessibilityServiceDetected({required this.packageNames});
+}
+
+/// The screen started being recorded or mirrored (AirPlay). iOS-only.
+/// Also emitted on subscribe when capture was already running. See `CShieldScreenCapture`.
+class ScreenCaptureDetected extends CShieldEvent {
+  const ScreenCaptureDetected();
 }

@@ -166,6 +166,12 @@ class MockCShieldEmbeddedPlatform with MockPlatformInterfaceMixin implements CSh
   }
 
   @override
+  Future<void> screenCaptureEnableProtection() {
+    // TODO: implement screenCaptureEnableProtection
+    throw UnimplementedError();
+  }
+
+  @override
   Future<void> btgUnprotect() {
     // TODO: implement btgUnprotect
     throw UnimplementedError();

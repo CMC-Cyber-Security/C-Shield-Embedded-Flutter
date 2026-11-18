@@ -17,6 +17,7 @@ import 'samples/error_handling.dart';
 import 'samples/malware_scan.dart';
 import 'samples/manual_signing.dart';
 import 'samples/required_level.dart';
+import 'samples/screen_capture.dart';
 import 'samples/selective_signing.dart';
 import 'samples/sensitive_flow.dart';
 import 'samples/startup_readiness.dart';
@@ -106,6 +107,7 @@ class SampleListPage extends StatelessWidget {
       ],
       'Runtime guards': [
         _Sample('Anti-keylogger', 'Untrusted keyboard / accessibility service.', (_) => const AntiKeyloggerSample()),
+        _Sample('Screen capture', 'Recording detection + black-out. iOS only.', (_) => const ScreenCaptureSample()),
         _Sample('Anti-overlay', 'Tapjacking guard. Android only.', (_) => const AntiOverlaySample()),
         _Sample('Behavioral touch guard', 'Auto-click detection. Android only.', (_) => const TouchGuardSample()),
         _Sample('Malware scan', 'Scan installed apps. Android only.', (_) => const AntiMalwareScanPage(), enabled: CShieldMalware.isSupported),
