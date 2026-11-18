@@ -67,4 +67,8 @@ class CShieldChannels {
   // and configure()/runCheck() are Android-only (no-ops on iOS).
   static const String antiKeyloggerConfigure = 'antiKeylogger.configure';
   static const String antiKeyloggerRunCheck = 'antiKeylogger.runCheck';
+
+  // Screen capture guard. Detection is auto-started inside [sdkInitialize] and
+  // arrives over [eventChannel] as onScreenCaptureDetected. iOS-only.
+  static const String screenCaptureEnableProtection = 'screenCapture.enableProtection';
 }

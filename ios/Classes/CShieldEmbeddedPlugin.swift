@@ -10,8 +10,9 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
     private let attestBridge = AttestBridge()
     // Forwards native anti-keylogger detections to Dart; reads `eventSink` lazily.
     private lazy var antiKeyloggerBridge = AntiKeyloggerBridge(eventSink: { [weak self] in self?.eventSink })
+    private lazy var screenCaptureBridge = ScreenCaptureBridge(eventSink: { [weak self] in self?.eventSink })
 
-    // Streams native SDK events (license lifecycle, attestation state, keyboard detections) to
+    // Streams native SDK events (license lifecycle, attestation state, keyboard and screen-capture detections) to
     // Dart over the "c_shield_embedded_event" EventChannel.
     private var eventSink: FlutterEventSink?
 
@@ -29,9 +30,9 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             let args = call.arguments as? [String: Any] ?? [:]
             guard let license = args["license"] as? String else { result(invalidArg()); return }
             // `cloudProjectNumber` is for Play Integrity (Android) only; iOS (App Attest) IGNORES it.
-            // Wire the anti-keylogger detection before init so a keyboard loaded at
-            // launch is routed to Dart rather than the SDK's default warning.
-            antiKeyloggerBridge.wireDetection()
+            // Wire capture detection before init so a keyboard loaded at launch is
+            // routed to Dart rather than the SDK's default warning.
+            wireCaptureDetection()
             CShield.initialize(license: license)
             CShield.setLicenseCallback(self)
             registerAttestStateListener()
@@ -42,6 +43,8 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             aipBridge.handle(call: call, result: result)
         case let m where m.hasPrefix("antiKeylogger."):
             antiKeyloggerBridge.handle(call: call, result: result)
+        case let m where m.hasPrefix("screenCapture."):
+            screenCaptureBridge.handle(call: call, result: result)
         case let m where m.hasPrefix("attest."):
             // Attestation (App Attest registration/refresh + trust L0–L4). AttestBridge mirrors
             // AttestBridge.kt. iOS reaches L4 at most (Secure Enclave, no StrongBox).
@@ -77,7 +80,10 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
 
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         eventSink = events
-        if attestListenerToken != nil { emitAttestState(CShield.state()) }
+        if attestListenerToken != nil {
+            emitAttestState(CShield.state())
+            screenCaptureBridge.emitIfCapturing()
+        }
         return nil
     }
 
@@ -100,6 +106,21 @@ public class CShieldEmbeddedPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                 "trustLevel": AttestBridge.trustId(CShield.currentTrustLevel()),
                 "lastError": CShield.lastError() ?? NSNull(),
             ] as [String: Any])
+        }
+    }
+
+    /// Routes the single `CShieldCaptureDetector.onDetection` callback to the keyboard and screen-capture bridges.
+    /// Setting it also disables the SDK's default warning popups.
+    private func wireCaptureDetection() {
+        CShieldCaptureDetector.onDetection = { [weak self] event in
+            switch event {
+            case .thirdPartyKeyboardBlocked:
+                self?.antiKeyloggerBridge.emitThirdPartyKeyboard()
+            case .screenCaptureDetected:
+                self?.screenCaptureBridge.emitDetected()
+            @unknown default:
+                break
+            }
         }
     }
 

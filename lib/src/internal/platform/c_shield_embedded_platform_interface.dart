@@ -150,4 +150,9 @@ abstract class CShieldEmbeddedPlatform extends PlatformInterface {
       throw UnimplementedError();
 
   Future<void> antiKeyloggerRunCheck() => throw UnimplementedError();
+
+  // ── Screen Capture ──────────────────────────────────────────────────────────
+  // Detection is auto-started by [initialize]; events arrive over [events] as
+  // ScreenCaptureDetected. iOS-only.
+  Future<void> screenCaptureEnableProtection() => throw UnimplementedError();
 }

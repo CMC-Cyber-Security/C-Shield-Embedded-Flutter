@@ -237,4 +237,9 @@ class MethodChannelCShieldEmbedded extends CShieldEmbeddedPlatform {
 
   @override
   Future<void> antiKeyloggerRunCheck() => _invoke(CShieldChannels.antiKeyloggerRunCheck);
+
+  // ── Screen Capture ──────────────────────────────────────────────────────────
+
+  @override
+  Future<void> screenCaptureEnableProtection() => _invoke(CShieldChannels.screenCaptureEnableProtection);
 }
